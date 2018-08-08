@@ -59,7 +59,7 @@ def check_for_papers():
             links = e['links']
             res =  check_for_pdf_link(links)
             if res[0]:
-                urllib.urlretrieve(res[1],filename='/home/fotis/Desktop/recommended-papers/'+e['title']+'.pdf')
+                urllib.urlretrieve(res[1],filename=SAVE_PATH+e['title']+'.pdf')
                 sendmessage('Recommended Paper added\n{0}'.format(e['title']))
         else:
             print "Not recommending with score : {0}".format(avg_score)
