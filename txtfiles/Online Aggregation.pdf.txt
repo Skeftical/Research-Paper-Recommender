@@ -1,0 +1,2137 @@
+Online Aggregation
+Joseph
+
+M.
+
+Computer
+University
+
+Hellerstein
+
+Science
+
+Division
+
+of C~alifornia, Berkeley
+
+jmh’@cs, berkeley.edu
+
+Peter
+
+J. Haas
+
+Almaden Research
+
+Helen
+
+~enter
+
+J. Wang
+
+Computer Science Division
+
+IBM Research Division
+
+university of California, Berkeley
+
+peterh@almaden.ibm.com
+
+belenjwt3cs.berkeley.eclu
+
+Abstract
+
+Aggregation in traditional datab=e systems is performed in
+batch mode: a query is submitted, the system processes a
+large volume of data over a long period of time, and, eventually, the final answer is returned. This archaic approach is
+frustrating to users and has been abandoned in most other
+areas of computing. In this paper we propose a new online
+aggregation interface that permits users to both observe the
+progress of their aggregation queries and control execution
+on the fly. After outlining usability and performance requirements for a system supporting online aggregation, we
+present a suite of techniques that extend a database system to meet these requirements, These include methods for
+returning the output in random order, for providing control over the relative rate at which different aggregates are
+computed, and for computing running confidence intervals.
+Finally, we report on an initial implementation of online aggregation in POSTGRES.
+
+approximation might be available very quickly,
+We propose changing the interface to aggregation processing and, by extension, changing aggregation processing
+itself. The idea is to perform aggregation onhn e in order to
+allow users both to observe the progress of their queries and
+to control execution on the fly. In this paper we present motivation, methodology, and some initial results on enhancing
+This ena relational DBMS to support online aggregation.
+
+1
+
+hancement requires changes not only to the user interface,
+but also to the techniques used for query optimization and
+
+Figure 1: An online aggregation interface for Query 1.
+
+Introduction
+
+execution. We also show how both new and existing statistical estimation techniques can be incorporated into the
+system to help the user assess the proximity of the running aggregate to the final result; the proposed interface
+makes these techniques accessible even to users with little
+or no statistical background. As discussed below, the online aggregation interface described here goes well beyond
+merely providing a platform for such statistical estimation
+techniques, and permits an interactive approach to both formal and informal data exploration and analysis,
+
+Aggregation is an increasingly important operation in today’s relational database management systems (DBMS’S), As
+data sets grow larger and both users and user interfaces become more sophisticated, there is a growing emphasis on
+
+extracting not just specific data items, but also general characterizations of large subsets of the data. Users want this
+aggregate
+information right away, even though producing it
+may involve accessing and condensing enormous amounts of
+information.
+Llnfortunately, aggregation processing in today’s database systems closely resembles the batch processing of the
+1960’s. When users submit an aggregation query to the
+system. the y are forced to wait wit bout feedback while the
+system churns through millions of records or more. Only
+after a significant period of time does the system respond
+with the (usually small ) final answer. A particularly fru~
+trating aq]ect of this problem is that aggregation queries
+are typically used to get a “rough picture” of a large body
+of information. and yet they are computed with painstaking precision, even in situations where an acceptably precise
+
+1.1
+
+A Motivating Example
+
+As a very simple example, consider the query that finds the
+average grade in a course:
+Query
+
+1:
+
+SELECTAVG(final.grade)
+FROMgrades
+UHEREcourse _nanre = ~CS186>;
+
+Permissionto maka digital/hardcopy of part or all this work for
+personal or claaaroomuae is granted without fee provided that
+copies ara not made or distributedfor profit or commercialadvantage, the copyright notice, the title of the publicationand its date
+appaar, and notice ia given that copying ia by permissionof ACM,
+Inc. To copy otherwise,
+to republish, to post on servers, or to
+redistribute to lists, requirea prior specific permissionand/or a fee.
+SIGMOD ’97 AZ, USA
+@ 1997 ACM 0-89791-91 1-4197{0005 ...’$3.50
+171
+
+AVG
+
+-----------I 2.631046 i
+------------
+
+If there is no index on the course_name attribute, this query
+scans the entire grades table before returning the answer
+shown above,
+As an alternative, consider the user interface in Figure 1,
+which could appear immediately after the user submits the
+query. This interface can begin to display output as soon ~<
+the system retrieves the first tuple that satisfies the WHERE
+clause.
+The output is updated
+regularly,
+at a speed that is
+
+comfortable
+to the human observer.
+The % done and status
+bar display give an indication
+of the amount of processing
+remaining
+before completion,
+The AVG field shows the run-
+
+ning aggregate, i.e., an estimate of tht final result based
+on all the records retrieved so far. The confidence
+and
+Interval fields give a probabilistic estimate of the proximity of the current running aggregate to the final result —
+according to Figure 1, for example, the current average is
+within +.0652539 of the final result with 95’?70 probability.
+The interval 2.6336 + 0.0652539 is called a running conjldence znterval. As soon as the query completes, this statistical information becomes unnecessary and need no longer
+be displayed,
+This interface is significantly more useful than the “blinking cursor” or “wristwatch icon” traditionally presented to
+users during aggregation processing. It presents information
+at all times, and more importantly it gives the user control
+over processing. The user is allowed to trade accuracy for
+time, and to do so on the fly, based on changing or unquantifiable human factors including time constraints, accuracy
+needs, and priority of other tasks. Since the user sees the
+ongoing processing, there is no need to specify these factors
+in advance.
+Obviously this example is quite simple; more complex
+examples are presented below. Even in this very simple example, however, the user is given considerably more control
+over the system than was previously available. In the rest of
+the paper we highlight additional ways that a user can control aggregation (Sections 1.2 and 2). We discuss a number
+of system issues that need to be addressed in order to best
+support this sort of cent rol (Section 3), provide formulas for
+computing Confidence and Interval parameters (Section 4
+and the Appendix), and present results from our initial implementation of ordine aggregation in POSTGRES (Section 5).
+1.2
+
+Figure 2: An online aggregation interface }vith groups.
+
+easy to use, confidence-interval methodology is more accessible to non-statistical users than in a traditional DBMS. Busy
+end-users are likely to be quite comfortable with the online
+aggregation “Stop-sign” buttons, since such interfaces are
+familiar from popular tools like web browsers,
+End-users
+are certainly less likely to be comfortable specifying statistical stopping conditions. They are also unlikely to want
+to specify explicit real-time stopping conditions, given that
+constraints in a real-world scenario are fluid — often another
+minute or two of processing “suddenly” becomes worthwhile
+at a previously imposed deadline. The familiarity and naturalness of the online aggregation interface cannot be overemphasized. It has been shown in the User Interface literature
+that status bars alone improve a user’s perception of the
+speed of a system [Mye85]. The combination of these status bars with both running estimates of the final result and
+online processing controls has the potential to significantly
+increase user satisfaction,
+The increase in power of the online aggregation interface
+over traditional interfaces calls for commensurately more
+powerful statistical estimation techniques. Some of the previous methods (such as “double sampling” [HOD91]) for
+computing confidence intervafs assume that records are sampled using techniques that are not appropriate in the setting
+of online aggregation. Previous work also has focused primarily on COUNTqueries, and a number of the confidenceinterval formulas that have been proposed are based on
+Chebyshev’s inequality. We provide confidence-interval formulas (see Section 4 and the Appendix) that are applicable
+to a much wider variety of aggregation queries. The formulas for ‘(conservative” confidence intervals are b~sed on
+recent extensions to Hoeffding’s inequality [Hoe63] and lead
+to conservative confidence intervals that are typically much
+narrower than corresponding intervals based on Chebyshev’s
+inequality.
+Although the above discussion has focused on issues pertinent to statistical estimation. it is imDortant to remember that much of the benefit derived ~rom online aggregation is not statistical in nature, The ongoing feedback
+provided by an online aggregation interface allows intuitive,
+non-stat istical insight into the progress of a query. It also
+permits ongoing non-textual, non-statistical representations
+of a query’s output. One common example of this is the
+appearance Of data on a map or graph as they are retrieved
+from the database.
+
+Online Aggregation and Statistical Estimation
+
+Assuming that records are retrieved in random order, a running aggregate can be viewed as a statistical estimator of
+the final query result. The proximity of the running aggregate to the final result can therefore be expressed, for
+examde,
+., in terms of a running confidence interval as illustrated above. The width of such a confidence intervaf serves
+as a measure of the precision of the estimator. Previous
+work [HOT88, HNSS96, LNSS93] has been concerned with
+methods for producing a confidence interval with a width
+that is specified prior to the start of query processing (e.g.
+“get within 2% of the actual answer with 95% probability”).
+The underlying idea in most of these methods is to effectively
+maintain a running confidence interval (not dkplayed to the
+user) and stop sampling as soon as the length of this interval is sufficiently small. Hou. et al. L[HOT891J consider the
+related problem of producing a confidence interval of minimal length, given a real-time stopping condition (e.g. “run
+for 5 minutes only”).
+A key strength of an online aggregation interface is that
+confidence intervals can be exploited without requiring a
+Though this
+priori
+specification of stopping conditions.
+may seem a simple point, consider the case of an aggregation
+query with a GROUPBY clause and six groups in its output,
+as in Figure 2, In an online aggregation system, the user can
+be presented with six outputs and six “Stop-sign” buttons.
+In a traditional DBMS. the user does not know the outmut
+,
+groups a priori, and hence cannot control the query in a
+group-by-group fashion.
+Because the online aggregation interface is natural and
+
+172
+
+1.3
+
+Other
+
+Related
+
+.LJn interesting
+
+ne\v
+
+Work
+class
+
+of
+
+systems
+
+is developing
+
+to
+
+support
+
+Processing (OLAP) [CCS93].
+Though none of these systems support online aggregation
+to the extent proposed here, one system — Red Brick —
+supports running count, average. and sum functions. One
+of the features of OLAP systems is their support for superaggregation ((’roll-up”), sub-aggregation (“drill-down”) and
+cross-tabulation. The CUBE operator [GBLP96] has been
+oro~osed
+as anadcfition to SQL to allow standard relational
+,.
+systems to support these kinds of aggregation. Computing CUBE queries typically requires significant processing
+[.LAD+ 96], and batch-style aggregation systems will be very
+unpleasant to use for these queries. Moreover, it is likely
+that accurate comcmtation of the entire data cube will often
+be unnecessary; o~ne approximations of thevanousaggregates are likely to suffice in numerous situations.
+Other recent results on relational aggregation have focused on new transformations for optimizing queries with
+aggregation [CS96, GHQ95, YL95, SPL96, SHP+96]. The
+techniques in these papers allow query optimizers more latitude in reordering operators in a plan. They are therefore
+beneficial to any system supporting aggregation, including
+online aggregation systems.
+There has been some initial work on “fast-first” auerv
+. .
+processing, which attempts to quickly return the first few
+tuples of a query, Antoshenkov and Ziauddin report on the
+Oracle Rdb (formerly DEC Rdb/VMS) system, which addresses the issues of fast-first processing by running multiple query plans simultaneously; this intriguing architecture requires some unusual query processing support [AZ96].
+Bayardo and Miranker prapose optimization and execution
+techniques for fast-first processing using nested-loops joins
+[BM96]. Much of this work is potentially applicable to online
+aggregation. The performance goals of online aggregation
+are somewhat more complex than those of fast-first queries,
+~~ we describe in Section 2.
+A different but related notion of online query processing
+was imrdemented in a svstem called APPROXIMATE [VL931.
+This sy~tem defies an approximate relational algebr~ whic~
+it uses to process standard relational queries in an iteratively
+refined manner. If a query is stopped before completion, a
+superset of the exact answer is returned in a combined extensional/intentional format. This model is different from
+the type of data browsing we address with online aggregation: it is dependent on carefully designed metadata and
+does not address aggregation or statistical assessments of
+precision.
+so-called
+
+2
+
+On-Line
+
+Analytical
+
+Figure .3: .i speed-controllable
+tion interface.
+
+A good Application Programming Interface (.\PI) must be
+provided to facilitate this.
+Control of Time/Precision:
+t~sers should be able to
+terminate processing at any time, thereby controlling the
+tradeoff between time and precision. Moreover, this control should be offered at a relatively fine granularity. As an
+example, consider the following query:
+Query 2:
+SELECT AVG(f inal.grade)
+GROUPBY major;
+
+FROIIIgrades
+
+The output of this query in an online aggregation system can
+be a set of interfaces, one per output group, as in Figure 2,
+The user should be able to terminate processing of each
+group individually. Such precise control is permitted by the
+interface in Figure 2.
+Control of Fairness/Partiality:
+Users shoufd be able
+to control the relative rate at which different running aggregates are updated. When aggregates are computed simultaneously for more than one group (as in Query 2 above),
+and each group is equally important, the user may want to
+ensure that either (i) the running aggregates are all updated
+at the same rate or (ii) the widths of the running confidence
+intervals all decrease at the same rate. (In the latter case,
+courses with higher variability among grades are updated
+more frequently than courses with lower variability. ) Ideally, af course, the user would not like to pay an overall
+performance penalty for this fairness. In many cases it may
+be beneficial to extend the interface so that users can dynamically control the rate at which the running aggregate
+for each group is updated relative to the others. Such an
+extension allows users to express partiah ty in favor of some
+groups over others. An example of such an interface appears
+in Figure 3.
+
+Usability and Performance Goals
+
+In this section, we outline usability and performance goals
+that must be considered in the design of a system for online
+aggregation. These goals are different than those in either
+a traditional or real-time DBMS. In subsequent sections, we
+describe how these goals are met in our initial implementation.
+2.1
+
+multi-group online aggrega-
+
+2.2
+
+Performance Goals
+
+Minimum
+Time to Accuracy:
+In online aggregation, a
+key performance metric is the time required to produce a
+useful estimate of the finaf answer. The definition of a “useful” answer depends, of course, upon the user and the situation. As in traditional systems, some level of accuracy
+must be reached for an answer to be useful. As in real-time
+systems, an answer that is a second too late may be entirely
+useless. Unlike either traditional or real-time systems, some
+answer is always available, and therefore the definition of
+“useful” can be based on both kinds of stopping conditions
+statistical and real-time — as well as on dynamic and
+subjective user judgments.
+
+Usability Goals
+
+Continuous
+Observation:
+As indicated above, statistical,
+graphical, and other intuitive interfaces shoufd be presented
+to allow users to observe the processing, and get a sense of
+the current level of precision. The set of interfaces must be
+extensible, so that an appropriate interface can be presented
+for each aggregate function, or combination of functions.
+
+173
+
+techniques in POSTGHES, and present some performance results in Section 5.
+
+Minimum
+Time to Completion:
+It is desirable to
+minimize the time required to produce the final answer,
+though this goal is secondary to the performance goal given
+above. We conjecture that, for large queries, users of an
+online aggregation typically will terminate processing long
+before the final answer is produced,
+Pacing: The running aggregates should be updated at
+a regular rate, to guarantee a smooth and continuously improving display. The output rate need not be as regular as
+that of a video system, for instance, but significant updates
+should be available often enough to prevent frustration for
+the user, without being so frequent that they overburden
+the user or user interface.
+3
+
+Buildhg
+
+3.2.1
+
+Running aggregates are computed correct 1? regardless of the
+order in which records are accessed. However, statistically
+meaningful estimates of the precision of running aggregates
+are available only if records are retrieved in random order,
+Practically speaking, this means that an onfine aggregation
+system should avoid access methods in which the attribute
+values of a tuple affect the order in which the tuple is retrieved. This can be guaranteed in a number of ways:
+1 Heap Scans: In traditional Heap File access methods, records are stored in an unspecified order, so simple heap scans can be effective for online aggregation.
+It should be noted, however, that the order of a heap
+file often does reflect some logicaf order, based on either the insertion order or some explicit clustering. If
+this order is correlated with the values of some attributes of the records (as may be the case after a bulk
+load, or for clustered heap fifes), an online aggregation
+system should note that fact in the system statistics,
+so that online aggregation queries over these attributes
+can choose an afternative access method.
+
+a System for Online Aggregation
+
+We have developed an initial prototype of our ideas in the
+POSTGRESDBMS. In this section we describe two approaches
+we followed in trying to add online aggregation to P OSTGRES.
+The first approach was triviaf to implement,
+but suffered
+from serious deficiencies in both usability and performance,
+The second approach required significant modifications to
+POSTGRES internals, but met our goals effectively.
+3.1
+
+A Naive Approach
+
+Since POSTGRES afready supports arbitrary user-defined output functions, it is possible to use it without modification to
+produce simple running aggregates like those in Red Brick.
+Consider Query 3, which requests the average of all grades:
+Query 3:
+SELECTrunning. avg(final-grade) ,
+running. confidence(final-grade)
+running. interval (final-grade)
+FROKgrades;
+
+2 Index Scans: Scanning an index returns tuples either in order based on some attributes (e.g. in a B+tree index), or in groups based on some attributes
+(e.g. in Hash or multi-dimensionaf indices). Both of
+these techniques are inappropriate for online aggregation queries over the indexed attributes. For example,
+if a column contains 10,000 copies of the value O, and
+10,000 copies of the value 100, an ordered or grouped
+access to the tuples will return wildfy skewed online estimates for the average of this column. However, if the
+attributes that are indexed are not the same as those
+being aggregated in the query, an index scan should
+produce an appropriately random access to the values
+in the attributes that are being aggregated, assuming
+no correlation between attributes.
+
+,
+
+In POSTGRES, we can write a C function running~vg that
+returns a float by computing the current average after each
+tuple. We can also write functions running.conf idence
+and running interval,
+based on the statistical results we
+present in Section 4. Note that the running_* functions
+are not registered as aggregate functions with POSTGRES,
+
+3 Sampling from Indices: Olken presents techniques
+for pseud~-random sampling from ~arious index sthctures [Olk93]. These techniques are ideal for producing
+meaningful confidence intervals. On the other hand,
+they can be less efficient than heap scans or even standard index scans, since they require repeated probing
+of random index buckets, and therefore defeat opt iimitations like clustering and prefetching.
+
+but rather as standard user-defined functions. As a result,
+POSTGRES returns running_* values for every tuple that satisfies the WHEREclause. In section 5, we present performance
+results demonstrating
+the prohibitive
+costs of handling alf
+these tuples,
+PO STGRES’s extensibility features make it convenient for
+supporting simple running aggregates such as this, Unfortunately, P OSTGRES is less useful for more complicated aggregates: SinCe our LIUNLkLg fUILCtiOILSare ILOt k faCt PO STGRES
+aggregates, they cannot be used with an SQL GROUP BY
+clause.
+A number
+of other performance
+and functionality
+problems
+arise in even the most forward-looking
+of today’s
+database
+systems,
+because
+they are all baaed on the traditional performance
+goal of minimizing
+time to a complete
+answer.
+As we present our more detailed approach, it should
+be clear that it goes much further in meeting
+our performance and usabifit y goals than this naive solution.
+
+Heap scans are often the method of choice for large aggregation queries. One of the other access methods may be
+more appropriate, however, when the heap file is ordered on
+the aggregation attributes or when it is cruciaf to have statistically valid running confidence intervals. Our implementation in POSTGRES supports heap scans and index scans;
+we do not currently support a sampling access method,
+3.2.2
+
+3.2
+
+Modifying a DBMS
+
+Random Access to Data
+
+to Support Online Aggregation
+
+Fair, Non-Blocking
+
+GROUP
+
+BY and DISTINCT
+
+An online aggregation system should be~
+returning answers as soon as possible, Moreover, if aggregates for multiple groups are being displayed simultaneously, it is often
+important that the groups receive updates in a fair manner.
+A traditional technique for grouping is to sort the input relation by the aggregation fields, and then collect the groups
+
+Online aggregation should not be implemented as a userIevel addition to a traditional DBMS. In this section, we
+describe modifications to a database engine to support online aggregation. We have implemented the bulk of of these
+
+174
+
+by scalming t lle out put of the sort, This presents two problems. First, sorting is a biocktrrg algorithm:
+no outputs
+can
+be produced
+until the entire input has been processed
+into
+sorted runs, which can take considerable
+time. Second,
+the
+results for groups are computed
+in their entirety one at a
+time: the aggregate for the first group is computed to com-
+
+scan lvith search key [> kl], iu order to quicklJ Find the
+next group in the table.
+When Yve find this value. L-2. we
+change the second scan’s search key to be [= k~], and return
+
+pletion before the second group is considered, and so on,
+Thus sort-based grouping algorithms are inappropriate for
+online aggregation,
+An alternative is to hash the input relation on its grouping columns. Hashing provides a non- blockingapproach to
+grouping: as soon as a tuple is read from the input, an
+updated estimate of the aggregate for its group can be produced. Moreover, groups at the output can be updated as
+often as one of their constituent records is read from the
+input. On the other hand, a drawback of hashing is that
+it does not scale gracefully with the number of grouping
+values — when the hash table exceeds the size of its associated buffer space, the hashing algorithm will begin to
+thrash. This problem is alleviated by using unary Hybrid
+Hashing [Bra84]. It may be expected that the number of
+distinct groups in a query should be relatively small, and
+hence naive hashiruz mav be acceptable in manv cases. A
+recent optimization-of unary Hyb~id Hashing cafied Hybrid
+Cache [HN96] guarantees performance that is equivalent to
+naive hashing for the cases where the hash table fits in memory, and scales gracefully when the hash table grows too
+large.
+SQL supports aggregates of the form aggregate(DISTINCT
+cofurnns). For such aggregates, the system must remove
+duplicates from the aggregation columns before computing
+the aggregate. Grouping and duplicate elimination are very
+similar, and both can be accomplished via either sorting or
+hashing. As with grouping, duplicates should be eliminated
+via hashing in an online aggregation system. In this scenario
+it is not unusual for the hash table to grow quite large, and
+techniques like Hybrid Cache can prove very important.
+The original version of POSTGRESusedsortin gt oremove
+duplicates and form groups, so we modified it to do naive
+hashing for these operations. Weplanan implementation of
+Hybrid Cache in our next online aggregation system,
+3.2.3
+
+Index Striding
+
+1Index
+
+striding
+Ibut we om]t
+
+3.2.4
+
+Non-Blocking
+
+Join Algorithms
+
+In order to guarantee reasonably interactive display of online
+
+aggregations, it is important to avoid algorithms that, block
+during query processing. In this section we present an initial
+discussion of standard join algorithms with regard to their
+blocking properties. We plan to do a quantitative evaluation
+of these tradeoffs in future work, but, this initial analysis
+already points out some important trends.
+Sort-merge join is clearly unacceptable for online aggregation queries, since sorting is a blocking operation. Merge
+join (without sort) is acceptable in most cases, Complications arise, however, because of the sorted output of a merge
+join. As with access methods that provide tuples in sorted
+order, join methods that generate sorted output can cause
+problems in terms of statistics, and also in terms of fairness
+in grouping. So merge join is useful in some cases and not
+others, and must be chosen with care.
+Hybrid hash join [DI<C)+84] blocks for the time required
+to hash the inner relation. This may be acceptable if the inner relation is small, and particularly if it fits into the buffer
+space available, The Pipeline hash join technique of [YW191]
+is a non-blocking hash join that treats its inner and outer
+relations symmetrically. Pipeline hash join is typically less
+efficient (in terms of completion time) than hybrid hash join
+since it shares butlers among both the inner outer relations.
+However, it may be appropriate for online aggregation if
+both relations in the ioin are large.
+The “safest” join ~lgorithm fo~ online aggregation is nested-loops join, particularly if there is an index on the inner relation. It is non-blocking, and produces outputs in the same
+order as the outermost relation. There are recent results on
+optimizing a pipeline of nested-loops joins to improve the
+
+Even with hash-based grouping, updates to a particular
+group will be available only as often as constituent records
+appear in the input of the grouping operator. Given a ram
+dom delivery of tuples at the input, updates for groups with
+few members will be very infrequent. To prevent this problem, it would be desirable to read tuples from the input in a
+round-robin fashion — that is, to provide random delivery
+of values within each group, but to choose from the groups
+in order (a tuple from Group 1, a tuple from Group 2, a
+tuple from Group 3, and so on). To support equal-width
+confidence intervals or partiality constraints, it may be desirable to use a weighted round-robin scheme that fetches
+from some groups more often than others,
+We support this behavior with a technique called indez
+striding.
+Given a B-tree index on the grouping columns, L on
+the first request for a tuple we open a scan on the leftmost
+edge of the index, where we find a key value kl We assign
+this scan a search key (or “SARG’) [SAC+ 79]) of the form
+[= k,]. After fetching the first tuple with key value ICI,on
+a subsequent request for a tuple we open a second index
+well,
+
+the tuple that was found. We repeat this procedure for
+subsequent requests until we have a value k,, such that a
+search key [> k~] returns no tuples. .kt this point, ~vesatisf~,
+requests for tuples by fetching from the scans [= kl ],
+[= km]in a (possibly weighted] round-robin fashion.
+With appropriate buffering, striding an}. index is at least
+as efficient as scanning a relation via an uncluttered index
+— each tuple of the relation should be fetched exactly once,
+though each fetch may require a random 1/0, This performance is improved if either (i) the index is the primary access method for the relation, (ii) the relation is clustered by
+the grouping columns, or (iii) the index keys contain both
+the grouping and aggregation columns, with the grouping
+columns as a prefix, In all of these cases, the performance
+of the index stride will be as good as that of scannin~ a relation via a clustered secondary index: no block of the relation
+will be fetched more than once.
+An important advantage of index striding is that it allows
+control over delivery of tuples across groups. In particular,
+it can assure that each group is updated at the output at
+an appropriate rate based on default settings or online user
+modifications. A final advantage is that. when a user requests
+that a group be stopped, the other groups will begin to
+deliver tuples more quickly than they did before.
+We extended POSTGRES to support index striding with
+weighted round-robin scheduling. Using this technique, we
+support the “Stop-sign” and “Speed” buttons of Figure 3.
+Index striding supports many of our usability and performance goals.
+
+is naturally
+applicable
+to other types of indices as
+CIISCUSS1OUhwe due to space constraints
+
+175
+
+3.2.6
+
+specxl of access
+t o t he first fetv t uples
+[BM96]. However,
+with a large, unindexed inner relation, the rate of production of nested-loops join may be so slow (albeit steady), that
+it will be unacceptable even for online aggregation.
+Clearly there are a number of choices for join strategies
+that satisfy the goals of online aggregation in certain situations. As in traditional query processing, an optimizer must
+be used to choose between these strategies, and we discuss
+this issue next.
+3.2.5
+
+Aggregate
+
+Functions
+
+In order to produce running aggregates. the standard set
+of aggregate functions must be extended. First, aggregate
+functions must be written that provide running estimates.
+For single-table queries, running computation of SUM,COUNT,
+and AVGaggregates is straightforward, and running conlputation of VARand STD DEVaggregates can be accomplished
+using numerically stable algorithms as in Chan, GOIUIJ,and
+LeVeque [CGL83]. In addition, new aggregate functions
+must be defined that return running confidence intervals
+for these estimates. We provide formulae for a variety of
+such confidence intervals in Section 4 and in the Appendix,
+Extensible systems like POSTGRESmake implementation of
+these database extensions relatively easy, since new aggregate functions can be added by users. Finally, the query executor must be modified to provide running aggregate values
+as needed for display, and an API must be provided to control the rate at which the values are provided. We discuss
+this issue next.
+
+Optimization
+
+A thorough understanding of query optimization for online
+aggregation will require (i) a quantitative specification of
+performance goals for online processing, and (ii) an accurate cost model for relational operators within that framework. We consider our work to date to be too preliminary
+for such specific analyses. However, some basic observations
+can vastly improve the quality of plans produced for online
+aggregation, and we present these points here,
+First, sorting can be avoided entirely in an onhne aggregation system, unless explicitly requested by the user. In
+scenarios where sorting is quick (e.g. for small relations),
+alternative algorithms based on hashing or iteration should
+be comparably fast anyway.
+Second, the notion of “interesting orders” (SAC+ 79] in
+a traditional
+optimizer must be extended for online aggregation. .4s shown in Section 3.2.4, it is undesirable to produce results that are ordered on the aggregation or grouping columns. Hence certain operations (e.g. scans and joins)
+should be noted to have “interestingly bad” orders, and may
+often be pruned from the space of possible sub-solutions during optimization.
+Third, blocking sub-operations (e.g. processing the inner
+relation of a Hybrid Hash Join) should have costs that are
+disproportionate to their processing time. The cost model
+for an operation in an online aggregation system should be
+broken into two parts: time tcIspent in blocking operations
+( “dead time” from the user’s perspective), and time t.spent
+producing tuples for the output ( “output time”). An appropriate cost function for online aggregation should have the
+form f(to) + g(td), where ~ is a linear function, and g is
+super-linear (e. g. exponential). This will “tax” operations
+with large amounts of dead time, and may naturally prune
+inappropriate plans like those that include sorting.
+Fourth, some preference should be given to plans that
+maximize user control, such as those that use index striding.
+To guarantee this, there must be a way to characterize the
+controllability features of an operator and weigh the benefit
+of these features against raw performance considerations.
+Finally, tradeoffs need to be evaluated between the output rate of a query and its time to completion. In many
+cases, the best “batch” plan (e.g. a merge join on sorted
+relations based on the aggregation attributes) may be so
+much faster than the best non-blocking plan (e.g. a nested
+loops join on these relations) that the “batcN behavior may
+be preferable even in an online environment. The point at
+which this tradeoff happens is clearly dependent on a user’s
+desires. An interesting direction that we intend to explore
+in future work is to devise natural controls that allow relatively naive users to set their preferences in this regard.
+Running multiple versions of a query as in Rdb [AZ96] is a
+natural way to make this decision on the fly, at the expense
+of wasted computing resources.
+
+3.2.7
+
+API
+
+The traditional SQL cursor interface is not sufficiently robust to support the kinds of feedback we wish to pass from
+the user interface to the database server. In an extensible
+DBMS fike POSTGRES, one can circumvent this problem by
+submit ting additional queries, which call user-defined functions, which in turn modify the processing in the DBMS. We
+introduced four such functions in POSTGRES. The first three
+are stopGroup,
+speedUpGroup, and slouDownGroup.
+Each
+
+takes as arguments a cursor and a group value, and is handled accordingly by the backend to stop, speed up, or slow
+down processing on a group within a query (e.g. by changing the round-robin schedule in an index stride), The fourth
+function. setSkinFactor.
+takes a cursor name and an inte.
+ger as arguments, and sets a skip jactor for the cursor. If
+the skip factor is set to k, then the DBMSonly ships an update to the user interface after k input tuples have been
+processed by the aggregate.
+This update frequency can
+affect both the readability. and the Performance
+of the user
+.
+interface, particularly if the user interface is running on a
+different machine than the DBMS, Our full user interface
+for POSTGRES includes a control for the skip factor, and is
+shown in Figure 4. All the functionality of this interface has
+been implemented in POSTGRES. The window of the interface grows dynamically as new groups are discovered during
+processing.
+We emphasize that this user interface is merely an examcJe
+of what can be done with an atxm-ormiate
+svstem
+and
+A
+. .
+.
+J
+API. Our solution of using queries with user-defined functions was a (rather inelegant) workaround for the insufficient
+API provided by SQL. A subsidiary goaf of this work is to
+push for extensions to the SQL API to support interfaces for
+online control of queries.
+
+4
+
+Running Confidence Intervals
+
+The precision of a running aggregate can be indicated by
+means of an associated running confidence interval. Suppose that n records have been retrieved in random order
+and a running aggregate Y. has been computed. For a prespecified confidence parameter p E (O, 1), the idea, as shown
+in the examples above, is to display a precision parameter en
+such that Y“ is within +cn of the finaf answer p with probability approximately equal to p. Equivalently, the random
+
+176
+
+We illustrate
+the construction
+of conservative
+and largesample
+confidence
+intervals
+with a simple
+example.
+(We
+conjecture
+that users typically
+will terminate
+an aggregation
+query before enough records have been retrieved
+to form a
+useful deterministic
+confidence
+interval; we therefore do not,
+discuss such intervals further, ) Let R be a relation contain-
+
+tz,
+ing m tuples, denoted tl,
+the form
+SELECT AVG(ezpression)
+
+,tm,and consider a query of
+
+FROMR;
+
+where expression is an arithmetic expression involving the
+attributes of R. A typical instance of such a query might
+look like
+SELECTAVG(price
+
+Figure 4: The full POSTGRES online aggregation interface.
+
+* quantity)
+
+FROMinventory;
+
+Denote
+by v(i) (1 < i < m) the value of expression when
+apphed to tuple tt. Let L, be the (random) index of the
+ith tuple retrieved from R; that is, the ith tuple retrieved
+from R is tuple tL,.We assume that all retrieval orders are
+equally likely, sothat P{ L,= l}=
+P{ L, =2}=...=
+P {L, = m } = I/m for each i. After n tuples have been
+retrieved (where 1 < n < m), the running aggregate for the
+above AVG query is given by Y. = (l/n) ~~=1 v(~, ),
+
+interval [Yn–c,,, ~~+c~] contains p with probability approximately equal top. (In the previous examples of the interface,
+the confidence parameter p is labeled Confidence and the
+precision parameter C. is labeled Interval. ) A large value
+oft” serves to warn the user that the records seen so far may
+not be sufficiently representative of the entire database, and
+hence the current estimate of the query result may be far
+from the final result. Moreover, as discussed above, the user
+can terminate processing of the aggregation query when en
+decreases to a desired level,
+A running confidence interval is statistically meaningful
+provided that records are retrievedin random order. Under
+this assumption, we can view the records retrieved so far
+as a random sample drawn uniformly without replacement
+from the set of all records in the database.
+There are several types of running confidence intervals
+that can be constructed from n retrieved records:
+
+To obtain a conservative confidence interval, we require
+that there exist constants a and b, known a priori, such that
+
+a ~ u(i) ~ b for 1 ~ i ~ m; such constants typically can
+be obtained from the database system catalog. Denote by p
+the final answer to the query, that is, p = (l/m) ~~1 v(t).
+Hoeffding’s inequality [Hoe63] asserts that
+P { Iyn – ,u/ <6 } >1 – 2e-2n’2f(b-”)2
+for e >0. Setting the right side of the above inequality equal
+to p and solving for c, we see that with probability z p the
+running average V. is within +Cn of the final answer p,
+where
+
+(i) Conservative confidence intervals contain the final answer p with a probability that is guaranteed to be
+greater than or equal to p. Such intervals can lx
+based on Hoeffding’s inequality [Hoe63] or recent extensions [Haa96a] of this inequality and are valid for
+alln>l.
+
+e.=(b–a)
+(
+
++M*))l’2.
+
+(1)
+
+To obtain a large-sample confidence interval, we do not
+require a prio ri bounds on the function u, but rather that the
+large-sample assumption hold. Since n is “small enough,”
+the random indices {L, : 1 ~ i s n } can be viewed as a
+sequence of independent and Identically distributed (i.i.d.)
+
+(ii) Large- sarnp/e confidence intervals contain the final answerp with a probability approximately equal top and
+are based upon central limit theorems (CLT’S). Such intervals are appropriate when n is small enough so that
+the records retrieved so far can be viewed as a sample
+drawn effectively with replacement but large enough
+so that approximateions based on CLT’s are accurate.
+When n is both small enough and large enough, we
+say that the large-sample assumption holds. Such intervals must be used judiciously: the true probability
+that a large-sample confidence interval contains v can
+be less (sometimes much less) than the nominal probability p. The advantage of large-sample confidence
+intervals is that, when applicable, they are typically
+much shorter than conservative confidence intervals.
+
+random variables. Set a2 = (l/m) ~~=1 (v(i) –p)z. Since n
+is “large enough, “ it follows from the standard CLT for i.i. d.
+random variables that fi(~n
+– p) /u is distributed approximately as a standardized (mean O, variance 1) normal random variable. By a standard “continuous mapping” ar~~~ment [Bi186, Section 25], this assertion also holds when a 1s
+replaced by the estimator Tn,2 (u) = (n – 1)–1 ~f=l (v(L, ) –
+~n) 2. It follows that
+
+(iii) Deterministic confidence intervals contain p with probabilityy 1. Such intervals are typically useful only when
+n is very large. Unlike the other types of confidence
+interval, a deterministic confidence interval is typically
+of the form [Y. – gn, Y. + z.] with <n # z..
+
+(2)
+
+for c > 0, where @ is the cumulative distribution function
+of a standardized normal random variable. Let ZP be the
+
+In practice, it may be desirable to dynamically adjust the
+type of running confidence interval that is displayed based
+on the current value of n.
+
+(P+ 1)/2 wantile Of tfis distribution,
+so that O(Z,) = (P +
+1)/2, Then, setting the rightmost term in (2) equal top and
+
+177
+
+sollil],g
+
+for
+
+t
+
+\ve sw
+
+t Ilat
+
+int f:rval is obtained
+
+,a large-sample
+
+( 100p)’X
+
+Confldcnce
+
+by choosing
+
+‘1=
+
+(Z;T’::(l’)
+)’”
+
+---–.–.
+--–––
+
+(3)
+
+The above example is relatively simple and utilizes wellknowm results from probability theory. Often, however, the
+aggregation query consists of the AVG,SUM,COUNT,VARIANCE,
+or STD DEVoijerator al]ldied not to alI the tu~les in a given
+base relation:
+but to ihe tuples in a result r;lation tl;at is
+specified using standard selection, join. and projection operators. Recent generalizations [Haa96a, Haa96b]of Hoeffding’sinequafity ancl the standard CLTpermit development of
+confidence-interval formulas forman.v of these more complex
+queries. These formulas are summarized in the Appendix.
+
+>
+
+1:
+
+L
+
+6
+
+z
+2
+2
+
+0.2
+
+l“”
+i
+
+‘“’..,
+.,..,,
+
+..... ..
+\
+.. . .
+--. —-—. —._ ._ ._. _ ._ ._ ._. _ ._. —..
+
+0,0
+
+,k-0
+
+5
+
+sk]p10
+sklp100
+skip1000
+skip]0000
+
+1
+
+200
+
+I
+
+I
+—
+
+I
+
+400
+seconds
+
+600
+
+Performance Issues
+
+Figure 5: Half-width (en) of conservative confidence interval
+for Query 4.
+
+In this section, we present initial results from an implementation of online aggregation in POSTGRES; these result illustrate the functionality of the system as well as some performance issues. Our implementation is based on the publicly
+available Postgres95 distribution [Pos95], Version 1.3, our
+measurements were performed with the POSTGRES server
+running on a DEC3000-M400 with 96Mb main memory, a
+lGb disk, and the DEC OSF/1 V3,2 operating system, The
+client application, written in Tcl/Tk, was run on an HP
+Pi-I< 1S(.’ 715/80 workstation on the same locaf network.
+For these experiments \veused enrollment data from the
+Llniversity of Wisconsin, which represents the enrollment
+history of students over a three-year period. We focus on
+a siude table. enroll. which records information about a
+student’s enrollment in a particular class. The table has
+1,547,606 rows, and in POSTGRES occupies about 316.6 Mb
+on disk.
+Our first experiment’s query simply finds the average
+grade of all enrollments in the table:
+Query 4:
+SELECT AVG(grade)
+
+, 0.99
+
+consAvgInterval(O
+
+much slower rate than they can be delivered by the server;
+note that the confidence intervals for “skiplO” are about,
+an order of magnitude wider than those for “skip 1000” and
+“skip10000”. A naive implementation of online aggregation,
+as suggested in Section 3.1, WOUIC1
+correspond to a skip
+factor setting of 1. Such an implementation would have very
+poor performance, shipping and displaying as many rows as
+there are in enroll.
+Our second experiment uses a similar query, which requests the average grade per “college” in the university,
+Query
+
+as
+
+as Interval
+
+,
+
+Note that in this query we choose a lower confidence
+(95%), which allows us to get smaller intervals somewhat
+more quickfy. There are 16 values in the college column.
+In Figure 6 we present performance for a large group (college=L, 925596 tuples), and for a small group (college=S,
+15619 tuples), using a variety of query plans. [n each graph,
+we measure the half-width of the confidence interval over
+time for (1) a sequential scan, (2) a clustered index stride,
+(3) an uncluttered index stride, and (4) a clustered index
+stride in which all groups but the one measured are stopped
+early by pressing the “stop-sign” button soon after the query
+begins running (“L only” and “S only” in Figures 6 and 7).
+Clearly, index stride is faster for clustered indices than
+for uncluttered ones, since the number of heapfile I/0s is
+reduced by clustering. More interestingly, note that, when
+some groups are stopped during index striding, the groups
+that remain are computed faster; this is reflected in the
+steeper decline of “clustered: L only” and “clustered: S
+only” relative to the corresponding “clustered” curves. Perhaps the most interesting aspect of these graphs is the difference between sequential scanning and index striding. Sequential scanning retrieves tuples faster than index striding,
+at the cost of lack of control.
+For the large group (L), the
+superior speed of sequential scanning is reflected in the rate
+at which the haWwidth of the confidence interval decreases.
+However, for the smaller group (S), eten the wnclustered zndex stride drops more steeply than seguenticzl scan. This is
+
+as Confidence,
+.99)
+
+5:
+
+SELECT college,
+AVG(grade) ,
+0.95 as Confidence ,
+consAvgInte rval(O.95)
+FROMenroll
+GROUPBY college ;
+
+Interval
+
+FROH enroll;
+
+In addition to the average grade, this query afso returns a
+conservative confidence intervaf for the average grade; this
+interval contains the final answer with probability at least
+99(%. The function consAvgInterval is based on the formula
+for c,, given in (1). Both AVGand ccmsAvgInterval are
+aggregate functions registered with POSTGRES, and provide
+running output during the online aggregation.
+Figure 5 shows the results of running the query in various contlgurations of the system. The vertical bar at 642
+seconds represents the time taken for POSTGRES to do traditional “batch” processing. Each of the curves represents
+confithe half-width (c~ ) of a running interval with 99~0
+dence, based on a sequential scan of the enroll table. In
+each experiment we varied the “skip factor” described in
+section
+:3.2.7 between 10 and 10000.
+The first point to note is that online aggregation is extremel~ useful: reasonable estimates are available quickly.
+In adchtion, these experiments illustrate the need for setting
+the skip factor intelligently. Our client application is written
+in Tcl/Tk. an interpreted (and hence rather slow) language;
+for our experiments it also produces an output trace per
+tup]e displayed. As the skip factor is reduced, the client
+application becomes overburdened and requests tuples at a
+
+178
+
+l)ro[o[:[>c
+
+–.–.
+
+unclrrsterecl:
+
+—
+
+clustered:
+
+L
+
+clustered:
+
+L only
+
+---
+
+L
+
+sequential:
+
+Illlllicrlltlltati(>ll.
+
+iv? ext(ll~ir’[[
+
+I>{)<l<;lil:>
+
+\vll }1 ;i\-
+
+gregates that produce running olltput, ha.~11-lwed grouljill~
+and clLll>licat
+e-clilllillatioll, index stridinS, Iuillol optlmiz;ition changes, ne~r .API’S and user intel-faces. Based on thew
+extensions we developed a relatively attractive system that
+satisfies many of the performance and usabilit~ ~oals \vese[
+
+L
+
+out
+
+to
+
+solve.
+
+important feature of a user inLerface for online aggregation is the ability to produce statistical confidence intervals for running aggregates, This paper indicates how such
+confidence intervals can be implemented in an> DBMS that
+stores rudimentary statistics such as minimum ancl maximum values per column.
+.4s we have noted, the usability and performance ueecls
+of online aggregation are not crisply defined, and there is
+much latitude in the solution space for the problem. We intend to visit more issues in more detail in our next phase of
+development, which will be done in the context of a commercial parallel object-relational DBMS. W-e conclude bs listing
+some directions we are considering for future work:
+.%L3
+
+1:
+- I ,,
+‘.
+
+{
+o
+
+------’...
+
+--: ----.. .. ---...... . . . ..—
+.-.
+
+I
+
+200
+
+1
+
+400
+seconds
+
+Figure 6: Half-width (en) of conservative
+for Query S, large group.
+
+---—
+--------
+
+.-.
+
+-=?
+
+-----
+
+-----
+
+I
+
+600
+
+confidence interval
+
+c User Interface:
+Online aggregation is motivated by
+the need for better user interfaces, and it is clear that
+additional work is needed in this area. One direction we plan to pursue is to present running plots
+of queries on a 2-dimensional canvas. as exemplified
+by the (batch) visualization system Tioga DataSplash
+[ACSW96], [n such a system, one can view the screen
+as a “graphical aggregate” — many data items are
+aggregated into one progressively refined image, Techniques for storing and presenting progressive refinements of images are well understood [VV92] and exploited by popular web browsers.
+It would be interesting to try to find common ground between the
+techniques presented here, and the image compression
+techniques used for progressive network deliver~,.
+
+unchrstered: S
+clustered: S
+clustered: S only
+sequential: S
+
+Another interface problem is to present “just enough”
+information on screen. In current OLAP systems, this
+is typically handled by presenting the input, c~atain a
+small number of default aggregate groups. and then allowing “drill-down” and “roll-up” facilities. We hope
+to combine this interface with online processing so that,
+drill-down is available instantly, with super-aggregates
+being continuously computed in the baclcgrouncl while
+users drill into cd hoc sub-aggregates that are computed more quickly.
+
+seconds
+Figure 7: Half-width (en) of conservative confidence interval
+for Query 5, small group.
+
+due to the fact that tuples from group S appear fairly rarely
+in the relation. Sequential scan provides these tuples only
+occasionally, while index striding — even when no groups
+are stopped — fetches tuples from S on a regular basis as
+part of its round-robin schedule. This highhghts an additional advantage of index striding: it provides faster estimates for smafl groups than access methods that provide
+random arrivals of tuules,
+These experiment: provide some initial insights into our
+techniques for online aggregation, and serve as evidence that
+our approach to online aggregation provides functionality
+and oerforrnance that would not be available in naive solutions. There is clearly much additional work to be done in
+measuring the costs and benefits of the various techniques
+proposed here. We reserve such issues for future study.
+6
+
+Nested Queries: An open question is how to provicle
+online execution of queries containing aggregations in
+both subqueries and outer-level clueries: the running
+results at the top level depend on the running results
+at lower levels. Traditional block-at-a-time pr-ocessing requires the lower query blocks to be processed
+before the higher ones, but this is a blocking execution model, z and hence violates our performance goals.
+Any non-blocking approach would lead to significant
+statistical problems in terms of confidence intervals.
+in addition to complicating other performance and Liability issues. An additional question is how processing
+is best time-diced across the various query blocks, in
+both uniprocessor and parallel configurations.
+
+Conclusion and Future Work
+
+Control Without
+Indices: As of now, we can provide maximal user control onfy when we have an appropriate index to support index striding. We are considering techniques for providing this control in other
+
+In this paper we demonstrate the need fm a new approach to
+aggregation that is interactive, intuitive, and user-controllable. Supporting this online approach to aggregation requires
+significant extension to a relational database engine. As a
+
+‘No
+
+179
+
+pun
+
+Intended
+
+scenarios
+partiality
+
+as \vell. For example. in order to provide
+in aggregates over joins, it may 13e beneficial
+
+References
+[AADt96]
+
+to effectively scan base relations multiple times, each
+time providing a different subset, of the relation for join
+processing; the early subsets can contain a preponderance of tuples from the preferred groups. The functionalit~’ of muftiple scans can be efficiently achieved via
+“piggy-back” schemes which allow more than one cursor to share a single physical scan of the data. Another
+possibility is to rechrster heaps on the fly to support
+more desirable access orders on subsequent rescans.
+
+J.
+
+7
+
+R.
+
+R, Agrawal.
+Ramakrishnan.
+
+P. il. Deshpande.
+and
+
+S,
+
+A,
+
+Gupta.
+
+Sarawagi,
+
+on
+
+of multidimensional aggregates.
+In Pr-oc.
+Very Large Data Bases. !vlumbai(Bombay),
+
+[ACSW!36] A. Aiken, J. Chen, M, Stonebraker,
+
+and A. Woodruff.
+Tioga-2: A direct manipulation database visualization environment. In Proc. of the
+Data Engineering, pages
+208–217, New Orleans, February 1996.
+
+ff?th
+Infl,
+C’onj.
+
+[AZ96] G. Antoshenkov and M Ziauddin. Query processing and
+optimization
+in Oracle Rdb.
+VLDB .Journal. 5(4):229–237,
+1996.
+[Bi186] P. Billingsley. Probability
+second edition, 1986.
+
+and Measure.
+
+Wiley, New York,
+
+[BM96] R. J. Bayardo, Jr. and D. P. Miranker. Processing queries
+for first-few answers,
+In Fifth Intl. Conj. Information
+and
+Knowledge Management, pages 45-52, Rockville,
+Maryland,
+1996.
+[Bra84] K. Bratbergsengen. Hashing methods and relational algebra operations. In Proc. 10th Int[. Conj. Very Large Data
+Bases, pages 323-333, Singapore, August 1984.
+
+Tracking Online Queries: Although users may often stop aggregation processing early, they may also
+want to make use of the actual tuples used to compute
+
+[CCS93] E,
+F.
+Codd,
+S. B.
+Codd.
+and
+C,
+ley.
+Providing
+OLAP
+(on-line
+analytical
+ing)
+to
+user-analysts:
+an
+IT mandate.
+http: //www.arborsoft.
+com/papers/coddTOC
+.html.,
+
+the partial aggregate. This is a common request in the
+context of, for example, financial auditing or statistical
+quality control: an unusual value of an online aggregate produced from a sample population may indicate
+the need to study that population in more detail. In order to support such query tracking, one must generate
+a relation, RID-list, or view while processing the aggregation online. Techniques for doing this efficiently
+will depend on the query.
+●
+
+A. Agarwal.
+Yaughton,
+
+the computation
+22nd lntl. Conj.
+September 1996.
+
+c Checkpointing
+and Continuation:
+Aggregation
+queries that benefit from online techniques will typically be long-running
+operations.
+As a result they
+should be checkpointed,
+so that computation
+can be
+saved across system crashes, power failures, and operator errors, This is particularly natural for online aggregation queries: users should be alfowed to “continue”
+queries (or pieces of queries) that they have previously
+stopped. Checkpoints of partially computed queries
+can afso be used as materialized sample views [Olk93].
+●
+
+F.
+
+T.
+SalprocessURL
+1993.
+
+[CGL83] T. F. Chan, G, H. Golub, and R. J. LeVeque.
+Algorithms for computing the sample variance: Analysis and recommendation.
+Amer. Statist., 37:242–247, 1983.
+[CS96] S. Chaudhuri and K. Shim. Optimizing queries with aggregate views. In P. M. G. Apers, M. Bouzeghoub,
+and G. Gardarin, editors, Advances
+in Database Technology- EDBT’96
+5th Intl. Conj. on Extending Database Technology, volume
+1057 of Lecture Notes in Computer Science, pages 167–182.
+Springer-Verlag,
+New York, 1996.
+
+Extensions of Statistical Results: We are actively
+working on confidence intervals for additional aggregate functions. [n addition, we are developing techniques to provide “simultaneous” confidence intervals,
+which can describe the statistical accuracy of the estimations for all groups at once, complementing the
+confidence interval per group. Finally, the statistical techniques in this paper assume accurate statistical information in the system catalogs, particularly
+regarding the cardinalities of relations. An extension
+we are pursuing is to provide confidence intervals that
+can tolerate a certain amount of error in these stored
+statistics.
+
+[DK0+84]
+D. J. DeWitt, R. H. Katz, F. Olken, L. D. Shapiro,
+M. R. Stonebraker, and D. Wood. Implementation
+techniques
+for main memory database systems.
+In Proc. A CA4-SIGMOD
+Intl. Conj. Management
+oj Data, pages 1–8, Boston, June
+1984.
+[GBLP96] J. Gray, A. Bosworth, A. Layman, and H. Pirahesh.
+Data cube:
+A relational aggregation operator generalizing
+Group-By, Cross-Tab, and Sub-Totals.
+In Pr-oc. oj the 12th
+Intl. Conj. Data Engineering,
+pages 152-159, 1996.
+[GHQ95] A. Gupta, V, Harinarayan, and D. Quass. Aggregatequery processing in data warehousing environments.
+In Proc.
+21st Intt. Conj. Very Large Data Bases, Zurich, September
+1995, pages 358-369.
+
+Acknowledgments
+
+Index Striding was inspired by a comment made by Mike
+Stonebraker. Andrew MacBride implemented the Postgres95
+Online Aggregation Interface. Thanks are due to Jeff Naughton. Praveen Seshadri. Donald Kossman. and Margo Seltzer
+for interesting discussion of this work. ‘Thanks &o to the
+following for their editorial suggestions: Alex Aiken, Mike
+Carey, Alice Ford, Wei Hong, Navin Kabra, Marcel Kornacker, Bruce Lindsay, Adam Sah, Sunita Sarawagi, our
+anonymous reviewers, and the students of CS286, UC Berkeley. Spring 1996. The Wisconsin course dataset was graciousl y provided by Bob Nolan of UW- Madison’s Department of Information Technology (Do IT), Hellerstein and
+Wang were partially funded by a grant from Informix Corporation.
+
+[Haa96a] P. J. Haas. Hoeffding inequalities
+for join-selectivity
+estimation and online aggregation.
+IBM Research Report RJ
+10040, IBM Almaden Research Center, San Jose, CA, 1996.
+[Haa96b] P, J. Haas. Large-sample and deterministic
+confidence
+intervals for online aggregation.
+IBM Research Report RJ
+10050, IBM Almaden Research Center, San Jose, CA, 1996.
+[HN96] J. M, Hellerstein and J. F. Naughton.
+Query execution
+techniques for caching expensive methods.
+In Proc. A CA4SIGMOD
+Intl. Conf. Management
+of Data, Montreal, June
+1996, pages 423–424.
+[HNSS96] P. J. Haas, J. F. Naughton,
+S. Seshadri, and A. N.
+Swami. Selectivity and cost estimation for joins based on random sampling. ~. CornprIt. Sgstern Sci., 52:550-569,
+1996.
+
+180
+
+[HUIM1] \V. -L’. Hou, C;. Ozsnyoglu,
+and E. Dogclu.
+Errorconstrainecl count query evaluation in relational databases. In
+proceedi~lgs, 1991 ,4 CM- SIGMOD Intl. ~or)j. Afunagmenf
+o.f
+Data, pages 278-287. ACk4 Press, 1991.
+Probability
+inequalities
+for sums of
+[Hoe63] \V. Hoeffding.
+bounded random variables.
+J. .4rner. Statist. Assoc., 58:1330, 1963.
+[H0T88]
+W.-C. Hou, G. Ozsoyoglu, and B. K. Taneja, Statistical estimators for relational algebra expressions.
+In Proc. ‘Yth
+.4 CA{ SIG.4 C’T-SIGMOD-SIGART
+Symposium on Principles
+of Database Systems, pages 276–287, Austin, March 1988.
+
+aggregate
+
+[HOT89]
+
+W-C.
+
+Hou, G. Ozsoyoglu,
+
+and B. K. Taneja. Processing
+
+relational queries with hard time constraints. In
+
+Proc. A CM-SIGAfOD
+Intl. C:onf, Management
+68–77, Portland, May-June 1989.
+
+of Data, pages
+
+[LNSS93] R. J. Lipton,
+J. F. Naughton,
+D, A. Schneider,
+and S. Seshadri,
+Efficient sampling strategies for relational
+database operations.
+?%eoretica~ Computer Science, 116:195226, 1993.
+
+where Op is one of COUNT,SUM,AVG, VARI AECE, or STD DEV, &rpression is an arithmetic expression as before, and pr~dzcate is
+an arbitrary predicate involving the attributes of R, When op is
+equal to cOUHT,we assume for simplicity that c,rpress$on is equal
+to *, that is, the ‘(value” of the expression is equal to 1 for all
+tuples. (Null values can be handled by modifying predicate, and
+counts of distinct values can be handled as described below. ) As
+in Section 4, relation R consists of t.uples tl , t2. ,tn,
+,
+If op is equal to COUfJT
+or SU14,the formulas in ( 1 ) and (3) apply.
+provided we take u(i) equal to m times the value of expression
+when applied to tuple t,if tuple t,satisfies predzcate and u(i) = o
+otherwise,
+To handle the remaining operators, namely AVG. VARIAMCE,
+and STD DEV,we proceed as follows. As in Section 4, let u(i) be
+the value of expression when applied to tuple t,, L, be the random
+index of the ith tuple retrieved from R, and a, b be a priori bounds
+on the function v. Denote by S (~ R) the set of tuples that satisfy
+predicate, and set u(i) = 1 if t, E S and u(i) = O otherwise. After
+n tuples have been retrieved, the running aggregates for an AVG,
+VARIANCE,
+and STD DEV query are given by
+
+[h4ye85] B. A. Myers. The importance of percent-done progress
+indicators for computer-human
+interfaces.
+In Proc. SZGCHI
+’85: Human Factors in Computing Systems, pages 11–17,
+April 1985,
+[Olk93] F. Olken. Random
+University of California,
+
+Sampling jrom Databases.
+Berkeley, 1993.
+
+[Pos95] Postgres95
+home
+http: //www.ki.net/postgres95.
+
+page,
+
+Y.(s)
+
+5
+
+= +
+n
+
+z.(s)
+
+=
+
+,=1
+Us)(L,),
+
++Ju(L,)
+(v(L,) - Y.(s))z
+
+1995.
+
+,
+
+,=1
+
+PhD thesis,
+
+and -,
+respectively, where In = ~~= ~ u(L, ) and the function ur,, is defined by uv(i) = u(i)v(i).
+We assume throughout.
+that In > 1.
+Set Oo(a, b) = (Ialvb) (la] +b) –0.25(lal V b)2,
+
+URL
+
+[SAC+ 79] P. G. Selinger, M. Astrahan, D. Chamberlain, R. Lorie,
+and T. Price, Access path selection in a relational database
+management
+system.
+In Proc. A C’A4-SIGMOD Intl. Conf.
+Management
+of Data,
+pages 22-34, Boston, June 1979.
+
+8
+(b -
+
+if O~a<bora<b
+
+<O;
+
+a)’
+
+9(a, b) =
+
+[SHP+96] P. Seshadri, J. M. Hellerstein, H. Pirahesh, T. C. Leung, R. Ramakrishnan,
+D. Srivastava, P. J. Stuckey, and S. Sudarshan. Cost-based optimization
+for magic: Algebra and implementation.
+In Proc. A CA4-SIGMOD Zntl. Conj. Management o,f Data, Montreal, June 1996, pages 435–446.
+
+{ ‘ax
+
+( (b ~a)’
+
+and
+
+1
+‘n
+
+where z
+
+[SPL96] P. Seshadri, H. Pirahesh. and T. C. Leung. Complex
+query decorrelation.
+In Proc. 12th IEEE Int/. Corzj. Data Engineering. New Orleans, February 1996.
+
+set Tn(j)
+
+= (l/n)~~=l
+
+Tn,q(f)
+
+[VU92] M. Vetterli and K. M. Uz. Multiresolution
+coding techniques for digital video: A review. Multidimensional
+Systems
+and Signal Processing, 3: 161–187, 1992.
+
+= O(a, b)ll*/2j
+
+V y = max(r,
+
+=
+
+ifa<O
+
+‘ (?~(~,b) )
+
+<b,
+
+In ( ~)!
+l–p
+
+y) and Lz] is the greatest
+-f(Li),
+
+&
+
+integer ~ z. Also
+
+- ~n(.f))’
+
+~(j(Li)
+
+and
+
+[VL93] S. V. Vrbsky and J. W. S. Liu. APPROXIMATE
+– A
+query processor that produces monotonically
+improving approximate answers.
+IEEE Transactions on Knowledge and
+Data Engineering, 5(6):1056-1068, 1993.
+
+‘.,q,r(j,9)
+where
+{1,2,...
+
+[WA91] A. Wilschut and P. Apers, Dataflow query execution in a
+parallel main-memory
+environment.
+In Proc. First Intl. Conf.
+Parallel and Distributed
+Information
+Systems, pages 68-77,
+Dec 1991.
+
+f
+
+=—
+~~
+. ,
+
+h(j(L;)
+- ‘n(j))g(9(~t) - ~n(9))rt
+i=l
+
+and g are arbitrary
+,m}. Finaily, set
+
+real-valued
+
+Gn = Tn,2(sw) – 2Rn,2Tn,1,1(uv,
+
+functions
+
+defined
+
+on
+
+u) + R:,2’Tn,2 (u)
+
+and
+
+[YL95] W. P. Yan and P.-A. Larson. Eager aggregation and lazy
+aggregation.
+In Proc. 21st Intl. Conj. Very Large Data Bases,
+Zurich, September 1995, pages 345-357.
+
+GA =
+
+~n,2(WJ2)
+– 4&,2~n,
+
+I, I(UV2, UV)
+
++ (4R~,2 – 2R”,1 )Tn,l, L(~M2 , M) + 4RZ,2Tn,2 (u~)
+Appendix:
+
++ (4 Rn,l Rn,2 – 8R~,2)Tn,1,1
+
+Formulas for Running Confidence Intervals
+
+where
+
+In this appendix we provide formulas that can be used to compute
+conservative and large-sample confidence intervals for a variety of
+aggregatbn
+queries encountered in practice, Throughout, we fix
+the confidence parameter p and give formulas for the precision
+parameter Cn.
+We first consider queries of the form
+
+Rn,l
+
+=
+
+(uu, ti) + (2R~,2
+
+7’n(SJV2)/T”(U),
+
+R“,2
+
+=
+
+- Rn, I)2Tn,2(ti),
+
+Tn(rLv)/T~(u),
+
+and
+
+UV2(i) = u(i) (V(i))z.
+Using this notation, Table 1 gives formulas for the precision
+constant Cn in conservative and large-sample confidence intervals;
+these formulas are derived in ~aa96a,
+Haa96b]. The quantity s
+that appears in the formulas is a lower bound for the (unknown)
+
+181
+
+..~~’~
+
+type
+
+1[2
+
+(
+
+(b-a)
+
+conserv.
+
+\’..lRL\s
+
+;l.(~
+
+1/2
+
+S(b – @)*
+
+l-p))
+
+n
+
+sTD
+
+E’E
+
+DE\”
+
+1/4
+
+s(b–a)2
+
+——
+
+——
+
+‘l(s-1)~
+
+4(s–
+
+1)2
+
+z~Gn
+lg-sample
+nT:(tl)
+
+() –
+
+“2
+
+(-;l
+
+(4nz?::::”
+
+1
+
+Table 1: Formulas for the precision parameters c~: one table.
+
+IS I; the
+
+larger
+
+1/2
+
+conserv.
+
+(b-a)
+
++ln(J(
+
+—
+I-p))
+
+lg-sample
+(’;Tn:(uv))”2
+
+FROMR tfHERE predicate
+
+SELECT op(ezpression)
+GROUPBY attributes
+
+.~vG
+
+SUM/COUNT
+
+type
+
+the lower bound s, the narrower the resulting conservative
+confidence interval.
+Note that we can set
+s = In if 1“ is sufficiently
+large. When predicate is empty, so that
+u(i) = 1 for 1 ~ i ~ Nf, then s can be taken as n in the second
+and third entries in the first row of the table. Moreover, in each
+of these entries the first term in the sum can be discarded.
+The formulas in Table 1 also apply to queries of the form
+quantity
+
+(-)1’2
+
+Forthe group with attribute value equal toz, use these formulae
+with u(i) = I if tuple t,satisfies
+predicate
+and tt. attribute = z,
+and u(i) = Otherwise.
+The formulax also can easily be modified
+to handle queries of the form
+
+Table 2: Formulas for the precision parameter t~: If tables,
+
+SELECT OP(DISTIXCT ezpressiora)
+
+and the definition of the function uv is analogous to the definition
+for the singlg-table cae~. The rgnning aggregate for an AVG query
+is given by Yn(S) = T“(uv)/Z’n(u).
+Set
+
+The
+
+idea
+
+is to
+
+set
+
+U;
+
+=
+
+FROtl R bJHEflEpredicate;
+
+1 if
+
+fL,
+
+E Sand
+
+v(~,
+
+) #
+
+o(~j)
+
+1 < j < i– 1; otherwise, set U; = O. The formulasin
+Table
+then hold with ti(L, ) replaced byU~, u@,)replacedby
+U~v(L,),
+and In replaced by I: = ~~=1 ~~~.
+We next consider queries of the form
+
+SELECT op(expresston)
+
+for
+1
+
+.n
+
+FROMR1, R2, . . ..R1<
+
+n
+
+UHEREpredicate;
+
+~
+
+where K > 1, op is one of COUET,SUM, or AVG, expression is an
+arithmetic expression, and predicate is an arbitrary predicate involving the attributes
+of input relations RI through R,r{. As
+before, ezpresston isalways equal t.o *when opisequalto
+COUIJT.
+Usually, predicate is a conjunction of join and selection predicates.
+A typical instance ofsucha
+query might look like
+
+Rk by
+
+tk,
+mk, where rnk is the number of tup]es in Rk.
+
+~
+n
+
+lnnn
+~
+*,=1
+
+~
+,2=1
+
+..
+
+~
+
+f(Ll,*,
+
+,L2,!,,
+
+~.,(.f)= f
+k=l
+
+(-&j ‘f(~.(-f:k.~)
+- ~.(.f))’)
+,=1
+
+and
+
+T
+
+(n-
+
+,)
+
+)
+
+(~n(g;k,.i)- ~n(g))r
+
+tk,~,
+tk,z,..
+.,
+Set v(i I,i2,
+
+... , iA-) equal tocr times the value of ezpresseon when applied to
+tuplest l,, I,t2,,2, . . . ,tI(,, R., wherea
+= 1 if op isequalto
+AVG and
+a = mlm2
+...mri
+if op M equal to COUETor SUH, Denote by S the
+subset of R1x R2x ..,xRX
+such that (tl,,l,
+tz,,2,
+...,tK,,
+K) G .s
+if and only if these tuples jointly satisfy predicate. Set u(il ,iz,
+(t~,,l. t2,,2, . . . .tl{,tK )ESandu(il,
+i2, ..., i~i) =
+. . i~:)=lif
+O otherwise. .4s before. let a, b be a priori bounds on the function
+2’.
+For each relation Rk, we assume that tuples are retrieved
+in random order, independently
+of the retrieval order for the
+other relations. Denote by L.k,, the random index of the ith
+tuple retrieved from relation Rk, Suppose that n tuples have
+been retrieved from relation Rk for 1 < k < K, where 1 ~ n <
+mini <k<f( mk. (See [Haa96a, Haa96b] for extensions to the case
+in WKIC6 nk tuples are retrieved from Rk for 1 ~ k < K and
+nk # nk, for some k, k-’.) T~e running aggregate for a COUETor
+SWI query is given by Yn = Tn(uv), where
+T*(j)=
+
+L,t,! ... t~k-,,,k_, !~k,,!~k+,,,k+,!.. ,~K,tK)!
+
+,K=l
+
+-(,$’)=&(J(~~(f;~?~)
+,2n
+- m)’
+
+SELECT SUN(supplier.
+price * inventory .quantity)
+FROMsupplier,
+inventory
+MHEREsupplier
+.part.number
+= inventory .part.number
+AED inventory
+.location
+= ‘San Jose’;
+For 1 < k ~ h-, denote the tup]esin
+
+nn
+
+. . . !~K,tK)
+
+,A. =l
+
+182
+
+Also set R~ = ~~(uv)/~~(u)
+
+and
+
+Gn = Tn,2(urJ) – 2RnTn,l,l
+
+(Uv, u) + %nT,1,2 (u)
+
+Using this notation, Table 2 gives formulas for the precision constant En in conservative
+and large-sample
+confidence intervals.
+As above, the formulas are derived in [Haa96a. Haa96b]. As can
+be seen, there is currently no formula available for conservative
+confidence intervals corresponding
+to AVG queries with selection
+predicates.
+(Actually, when there are no predicates, so that the
+average is being taken over a cross-product of the input relations.
+the formula in Table 2 for COUNT and SUM queries applies.
+This case is uncommon in practice, however.)
+
+

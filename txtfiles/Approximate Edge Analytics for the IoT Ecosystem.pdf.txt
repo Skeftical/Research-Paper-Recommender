@@ -1,0 +1,2108 @@
+Approximate Edge Analytics for the IoT Ecosystem
+Zhenyu Wen∗ , Do Le Quoc† , Pramod Bhatotia∗ , Ruichuan Chen‡ , Myungjin Lee∗
+
+arXiv:1805.05674v1 [cs.DC] 15 May 2018
+
+∗ University
+
+of Edinburgh
+
+† TU
+
+Abstract—IoT-enabled devices continue to generate a massive
+amount of data. Transforming this continuously arriving raw
+data into timely insights is critical for many modern online
+services. For such settings, the traditional form of data analytics
+over the entire dataset would be prohibitively limiting and
+expensive for supporting real-time stream analytics.
+In this work, we make a case for approximate computing for
+data analytics in IoT settings. Approximate computing aims for
+efficient execution of workflows where an approximate output is
+sufficient instead of the exact output. The idea behind approximate computing is to compute over a representative sample instead of the entire input dataset. Thus, approximate computing —
+based on the chosen sample size — can make a systematic tradeoff between the output accuracy and computation efficiency.
+This motivated the design of A PPROX I OT— a data analytics
+system for approximate computing in IoT. To realize this idea,
+we designed an online hierarchical stratified reservoir sampling
+algorithm that uses edge computing resources to produce approximate output with rigorous error bounds. To showcase the
+effectiveness of our algorithm, we implemented A PPROX I OT
+based on Apache Kafka and evaluated its effectiveness using a
+set of microbenchmarks and real-world case studies. Our results
+show that A PPROX I OT achieves a speedup 1.3×—9.9× with
+varying sampling fraction of 80% to 10% compared to simple
+random sampling.
+
+I. I NTRODUCTION
+Most modern online services rely on timely data-driven
+insights for greater productivity, intelligent features, and higher
+revenues. In this context, the Internet of Things (IoT) — all
+of the people and things connected to the Internet — would
+provide important benefits for modern online services. IoT is
+expected to generate 508 zettabytes of data by 2019 with
+billions of new smart sensors and devices [1]. Large-scale
+data management and analytics on such “Big Data” will be
+a massive challenge for organizations.
+In the current deployments, most of this data management
+and analysis is performed in the cloud or enterprise datacenters [2]. In particular, most organizations continuously collect
+the data in a centralized datacenter, and employ a stream processing system to transform the continuously arriving raw data
+stream into useful insights. These systems target low-latency
+execution environments with strict service-level agreements
+(SLAs) for processing the input data stream.
+Traditionally, the low-latency requirement is usually
+achieved by employing more computing resources and parallelizing the application logic over the datacenter infrastructure.
+Since most stream processing systems adopt a data-parallel
+programming model such as MapReduce, almost linear scalability can be achieved with increased computing resources.
+However, this scalability comes at the cost of ineffective
+utilization of computing resources and reduced throughput of
+the system. Moreover, in some cases, processing the entire
+input data stream would require more than the available
+
+Dresden
+
+‡ Nokia
+
+Bell Labs
+
+computing resources to meet the desired latency/throughput
+guarantees. In the context of IoT, transferring, managing, and
+analyzing large amounts of data in a centralized enterprise
+datacenter would be prohibitively expensive [3].
+In this paper, we aim to build a stream analytics system to
+strike a balance between the two desirable but contradictory
+design requirements, i.e., achieving low latency for real-time
+analytics, and efficient utilization of computing resources. To
+achieve our goal, we propose a system design based on approximate computing paradigm that explores a novel design point
+to resolve this tension. In particular, approximate computing
+is based on the observation that many data analytics jobs are
+amenable to an approximate rather than the exact output [4],
+[5]. For such workflows, it is possible to trade the output
+accuracy by computing over a subset instead of the entire data
+stream. Since computing over a subset of input requires less
+time and computing resources, approximate computing can
+achieve desirable latency and computing resource utilization.
+Furthermore, the heterogeneous edge computing resources
+have limited computational power, network bandwidth, storage capacity, and energy constraints [3]. To overcome these
+limitations, the approximate computing can be adapted to
+the available resources through trading off the accuracy and
+performance, while building a “truly” distributed data analytics
+system over IoT infrastructures such as mobile phones, PCs,
+sensors, network gateways/middleboxes, CDNs, and edge datacenters at ISPs.
+We design and implement A PPROX I OT to realize our vision
+for a low-latency and resource-efficient stream analytics system based on the above key observations. A PPROX I OT recruits
+the aforementioned edge computing nodes and creates a stream
+processing pipeline as a logical tree (Figure 1). A data stream
+traverses over the logical tree towards a centralized cloud or
+datacenter where the data analysis queries are executed. Along
+the route to the central location, each node independently
+selects data items from the input stream while preserving
+statistical characteristics. The core of A PPROX I OT’s design is
+a novel online sampling algorithm that updates the significance
+(weight) of those selected data items on each node without any
+cross-node synchronization. The system can tune the degree
+of sampling systematically, depending on resource availability
+and analytics requirements.
+Overall, this paper makes the following key contributions.
+• Approximate computing for IoT-driven stream analytics. We make a case for approximate computing in
+IoT, whereby the real-time analysis over the entire data
+stream is becoming unsustainable due to the gap between
+the required computing resources and the data volume.
+• Design and implementation of A PPROX I OT (§III and
+§IV). We design the core algorithm of A PPROX I OT—
+
+Edge
+nodes
+
+Analyst
+
+Sample sizes
+Regional edge
+computing node
+(Sampling node)
+
+WAN
+network
+
+Continental
+computing node
+(Sampling node)
+
+...
+
+Query
+and
+budget
+
+Data stream
+Inter-continental
+network
+
+WAN
+network
+
+•
+
+Output
+
+Central
+Computing
+Datacenter
+
+•
+
+Sample sizes
+
+Fig. 1. System overview.
+
+•
+
+weighted hierarchical sampling — based on theoretical foundations. The algorithm needs no coordination
+across nodes in the system, thereby making A PPROX I OT
+easily parallelizable and hence scalable. Moreover, our
+algorithm is suitable to process different types of input
+streams such as long-tailed streams and uniform-speed
+streams. We prototype A PPROX I OT using Apache Kafka.
+Comprehensive evaluation of A PPROX I OT (§V and
+§VI). We evaluate A PPROX I OT with synthetic and realworld datasets. Our evaluation results demonstrate that
+A PPROX I OT outperforms the existing approaches. It
+achieves 1.3×—9.9× higher throughput than the native
+stream analytics execution, and 3.3×—8.8× higher accuracy compared to a simple random sampling scheme.
+II. OVERVIEW AND BACKGROUND
+
+A. System Overview
+A PPROX I OT builds on two design concepts: hierarchical
+processing and approximate computing. In A PPROX I OT, a
+wide variety of devices or sensors (so-called IoT devices)
+generate and send data streams to regional edge computing
+nodes geographically close to themselves. The edge computing
+clusters managed by local ISPs or content providers sample
+only a subset of the input data streams and forward them
+to larger computing facilities such as datacenters. The data
+streams, again sampled at the datacenters, can be further
+forwarded to a central location, where a user-specified query
+is executed and the query results are produced for global-level
+analysis. These computing clusters spread across the globe
+form a logical stream processing pipeline as a tree, which is
+collectively called A PPROX I OT. Figure 1 presents the highlevel structure of the system.
+The design choice of A PPROX I OT, i.e., combining approximate computing and hierarchical processing, naturally
+enables the processing of the input data stream within a
+specified resource budget. On top of this feature, A PPROX I OT
+produces an approximate query result with rigorous error
+bounds. In particular, A PPROX I OT designs a parallelizable
+online sampling technique to select and process a subset of
+data items, where the sample size can be determined based on
+the resource constraints at each node (i.e., computing cluster),
+without any cross-node coordination.
+Altogether, A PPROX I OT achieves three goals.
+
+•
+
+Resource efficiency. A PPROX I OT utilizes computing and
+bandwidth resources efficiently by sampling data items
+at each individual node in the logical tree. If we were
+to sample data items only at a node where the query
+is executed, all the computing and bandwidth resources
+used to process and forward the unused data items would
+have been wasted.
+Adaptability. The system can adjust the degree of sampling based on resource constraints of the nodes. While
+the core design is agnostic to the ways of choosing the
+sample size, i.e., whether it is centralized or distributed,
+this adaptability ensures better resource utilization.
+Transparency. For an analyst, the system enables computation over the distributed data in a completely transparent fashion. The analyst does not have to manage
+computational resources; neither does she require any
+code changes to existing data analytics application/query.
+
+B. Technical Building Blocks
+A PPROX I OT relies on two sampling techniques as the building blocks: stratified sampling [6] and reservoir sampling [7]
+because the properties of the two allow A PPROX I OT to meet
+its needs.
+1) Stratified Sampling: A sub-stream is the data items
+from a source. In reality, sub-streams from different data
+sources may follow different distributions. Stratified sampling
+was proposed to sample such sub-streams fairly. Here, each
+sub-stream forms a stratum; if multiple sub-streams follow
+the same data distribution, they can be combined to form a
+stratum. For clarity and coherence, hereafter, we still use substream to refer to a stratum.
+Stratified sampling receives sub-streams from diverse data
+sources, and performs the sampling (e.g., simple random
+sampling [8] or other types of sampling) over each substream independently. In doing so, the data items from each
+sub-stream can be fairly selected into the sample. Stratified
+sampling reduces sampling error and improves the precision
+of the sample. It, however, works only in a situation where it
+can assume the knowledge of the statistics of all sub-streams
+(e.g., each sub-stream’s length). This assumption on prior
+knowledge is unrealistic in practice.
+2) Reservoir Sampling: Reservoir sampling is often used to
+address the unrealistic assumption aforementioned in stratified
+sampling. It works without the prior knowledge of all the substreams. Suppose a system receives a stream consisting of an
+unknown number of data items. Reservoir sampling maintains
+a reservoir of size R, and wants to select a sample of (at
+most) R items uniformly at random from the unbounded data
+stream. Specifically, reservoir sampling keeps the first-received
+R items in the reservoir. Afterwards, whenever the i-th item
+arrives (i > R), reservoir sampling keeps this item with
+probability of N/i and then randomly replaces one existing
+item in the reservoir. In doing so, each data item in the
+unbounded stream is selected into the reservoir with equal
+probability. Reservoir sampling is resource-efficient; however,
+it could mutilate the statistical quality of the sampled data
+
+Algorithm 1: : A PPROX I OT’s algorithm overview
+Input:
+query: streaming query (only for root)
+budget: resource budget to execute the query
+parent: successor node
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+
+begin
+foreach time interval do
+size ← costFunction(budget)
+// W in : Weight set from downstream nodes
+// C in : Count set from downstream nodes
+{W in , C in , items} ← getDataStream(interval)
+// Weighted Hierachical Sampling (§III-B)
+// W out : a map of weights of the sample
+// C out : a map of counts of the sample
+{sample, W out , C out } ← WHSamp(items, size, W in ,
+C in )
+if parent is not empty then
+// (weight, count, sample) to upstream node
+Send(parent, W out , C out , sample)
+end
+else
+// Run query as a data-parallel job
+result ← runJob(query, sample, W out )
+// Estimate error bounds (§III-D)
+error ← estimateError(result)
+write result ± error
+end
+end
+end
+
+items in the reservoir especially when the input data stream
+combines multiple sub-streams with different distributions. For
+example, the data items received from an infrequent substream could easily get overlooked in reservoir sampling.
+III. D ESIGN
+In this section, we introduce the design of A PPROX I OT.
+We first present its workflow (§III-A). Then, we detail its
+sampling mechanism (§III-B and §III-C), and error estimation
+mechanism (§III-D). Finally, we discuss design extensions to
+enhance the proposed system (§III-E).
+A. System Workflow
+Algorithm 1 presents the overall workflow of A PPROX I OT.
+The algorithm running at each node takes resource budget and
+parent as input while that of a root node additionally accepts a
+user-specified streaming query. A number of sources generate
+data items and continuously push them in a streaming fashion
+through a pre-configured logical tree. Each node in the tree
+samples data items on a sub-stream basis, based on a specified
+resource budget. Then, each node (denoted as sampling node
+in Figure 1) forwards those sampled sub-streams associated
+with a small amount of metadata to upstream node towards
+a root node. For sub-streams arriving at the root (aggregate
+node), the root conducts sampling of sub-streams, executes the
+query on the data items, and outputs query results alongside
+rigorous error bounds.
+For each time interval, a node derives the sample size (size)
+based on the given resource budget (line 3). It then extracts
+data items and metadata—weight set and count set—for substreams that arrive within the interval (line 6). Next, it runs
+
+Interval u
+
+w=1
+
+c=6
+
+1
+
+2
+
+Interval u+1
+
+3
+
+4
+
+5
+
+6
+
+Reservoir sampling with reservoir size, n = 3
+
+A
+
+w=2
+
+c=3
+
+1
+
+4
+
+6
+
+c=3
+
+1
+
+4
+
+Network
+w=2
+
+B
+
+6
+
+Reservoir sampling with reservoir size, n = 1
+
+Network
+
+C
+
+w=6
+
+c=1
+w=6
+
+4
+c=1
+
+4
+
+Fig. 2. Synchronized arrival of data stream. A node (e.g., A) receives substreams (only one sub-stream is shown for brevity) and an interval of a substream contains weight (w), count (c), and a series of items. In this model, the
+count is equal to the number of items arriving in that interval. After reservoir
+sampling is applied, w and c are updated based on Algorithm 2. For example,
+node A samples three out of 6 items; thus, w = 2 and c = 3.
+
+a weighted hierarchical sampling (WHSamp) using the items,
+weight set (W in ) and count set (C in ), and returns the sampled
+sub-streams, revised weight set, W out and count set, C out
+(line 10). If the node is a sampling node (if there is parent
+for the node), then the node sends the sample, W out and
+C out to its parent node (line 13). Otherwise, it processes the
+query on those data and as the last step, it runs an error
+estimation mechanism (as described in §III-D) to compute the
+error bounds for the approximate query result in the form of
+output ± error bound (lines 16-20).
+The crux of A PPROX I OT is the proposed hierarchical sampling algorithm (detailed in §III-B) that selects a portion of all
+sub-streams for the sample without neglecting any single substream, for which we leverage and extend the existing stratified
+reservoir sampling [9].
+The whole process repeats for each time interval as the
+computation window slides [10], [11]. Note that the resource
+budget can change across time intervals to adapt to user’s
+requirements for the budget.
+B. Weighted Hierarchical Sampling
+We assume that the items belonging to an interval arrive in
+a synchronized fashion. Figure 2 illustrates this synchronized
+arrival model where all the items arrive in the same interval
+when their associated sets W in and C in arrive. In §III-C, we
+relax this assumption.
+Given this synchronization model, we design Algorithm 2.
+The algorithm outlines the high-level idea of the weighted
+hierarchical sampling in a node. The node first stratifies
+the input stream into sub-streams according to their sources
+(line 5). It then determines, denoted as Ni , the reservoir size
+for each sub-stream Si (line 7). Given the resovoir sizes, the
+node selects items at random from Si through the traditional
+reservoir sampling (line 10). The reservoir sampling ensures
+that the total number of selected items from Si does not exceed
+its sample size Ni . Given the input weight (Wiin ) for Si , the
+
+where Yi is the number of randomly selected items for Si
+(Yi ≤ Ni ).
+Suppose there are in total X sub-streams {Si }X
+i=1 , the
+approximate total sum of all items received from all substreams (denoted as SU M∗ ) is:
+
+Algorithm 2: : Weighted hierarchical sampling
+
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+
+Input:
+items: input data items
+sampleSize: size of sample
+W in : weight set from downstream nodes
+C in : count set from downstream nodes
+WHSamp(items, sampleSize, W in , C in )
+// sample: set of items sampled within a time interval
+sample ← ∅
+// Update S, a set of sub-streams seen so far within the time
+interval
+S ← Update(items)
+// Decide the sample size for each sub-stream
+N ← getSampleSize(sampleSize, S)
+forall the Si ∈ S do
+ci ← |Si | // Si : sub-stream i
+samplei ← RS(Si , Ni ) // Reservoir sampling
+// Compute the weight of samplei according to Equation 1
+if ci > Ni then
+ci
+wi ← N
+i
+out
+Wi
+← Wiin ∗ wi // update weight of Si
+out
+Ci ← Ni
+end
+else
+Wiout ← Wiin
+Ciout ← ci
+end
+end
+return W out , C out , sample
+
+SU M∗ =
+
+X
+X
+
+Multiple nodes. We extend our notations for further discussion. SU Mi,j is an estimated sum of items in sub-stream Si
+out
+at node j. We redefine ci,j , wi,j , Ni,j , Wi,j
+and Yi,j in
+the similar fashion. We define Ei,j as a set of nodes on an
+upstream path to node j (including j) for sub-stream Si from
+its original source. Also, let π(i, j) be a predecessor node (i.e.,
+an immediate downstream node) of node j on an upstream
+path for sub-stream Si . Then, we have:
+
+SU Mi,j
+
+node finally computes an effective weight (lines 12-20). This
+process repeats across all sub-streams. Finally, we return the
+final sample, weight set, and count set (line 22).
+We now describe how to statistically recreate the original
+items from the sample and set of weights. In order to facilitate
+our discussion, we consider two cases: (i) single node and (ii)
+multiple nodes.
+Single node. In this case, a node works as root. Initially, when
+a source generates data stream, there is no weight set given
+to the node, and each weight of input sub-streams is assumed
+to be 1 (i.e., Wiin = 1). The reservoir sampling guarantees at
+most Ni number of items is selected out of ci items from Si .
+To reconstruct the statistics of the original items, we compute
+a specific weight (wi ) for the items selected from each substream Si as follows:
+wi =
+
+ci /Ni
+
+if ci > Ni
+
+1
+
+if ci ≤ Ni
+
+(1)
+
+We finally calculate an effective weight for Si by multiplying Wiin by wi , that is, Wiout = Wiin ∗ wi . Since Wiin = 1,
+effectively Wiout = wi .
+Given the sampled items and weight for each sub-stream, it
+is feasible to support linear queries with approximation. One
+such example is to compute the sum of all received items by
+computing an approximate weighted sum of sub-stream Si .
+We denote the sum as SU Mi and estimate it as follows:
+SU Mi = (
+
+Yi
+X
+
+k=1
+
+Ii,k ) · Wiout
+
+(3)
+
+Note that Algorithm 2 works exactly the same way as one
+in [9] when there is only one node.
+
+=
+
+(
+
+Yi,j
+X
+
+k=1
+Yi,j
+
+(
+
+SU Mi
+
+i=1
+
+(2)
+
+=
+
+(
+
+X
+
+k=1
+
+out
+Ii,j,k ) · Wi,j
+
+(4)
+
+out
+Ii,j,k ) · max Wi,e
+
+(5)
+
+e∈Ei,j
+
+out
+out
+out
+out
+Here, Wi,j
+= maxe∈Ei,j Wi,e
+because Wi,e
+= Wi,π(i,e)
+as wi,e = 1 if ci,e ≤ Ni,e for any e ∈ Ei,j (see line 18 in
+Algorithm 2).
+Now let χ(i, j) be an index of the first node that has the
+out
+out
+largest weight among nodes in Ei,j . Then, Wi,j
+= Wi,χ(i,j)
+=
+out
+out
+maxe∈Ei,j Wi,e
+. If Wi,j
+= 1, we consider that χ(i, j) does
+out
+not exist. Given these basics, Wi,j
+is expressed as follows.
+(
+ci,src /Ni,χ(i,j) if ci,src > Ni,χ(i,j)
+out
+Wi,j
+=
+(6)
+1
+if ci,src ≤ Ni,k , ∀k ∈ Ei,j
+
+Here, ci,src is the number of items for sub-stream Si at its
+original source. We can prove this by induction. For this
+discussion, let υ(i, j) be an immediate upstream node of node
+j on an upstream path for sub-stream Si .
+out
+Base case: Wi,υ(i,src)
+= ci,src /Ni,υ(i,src) if ci,src >
+out
+Ni,υ(i,src) ; Wi,υ(i,src) = 1 otherwise.
+Let j denote υ(i, src). In this case, if ci,src > Ni,j ,
+out
+out
+χ(i, j) = j. Thus, Wi,j
+= Wi,χ(i,j)
+= ci,src /Ni,χ(i,j) . If
+out
+ci,src ≤ Ni,j , obviously Wi,j = 1.
+out
+out
+Inductive step: Wi,υ(i,k)
+= Wi,k
+· ci,υ(i,k) /Ni,υ(i,k) if
+out
+out
+ci,υ(i,k) > Ni,υ(i,k) ; Wi,υ(i,k) = Wi,k otherwise.
+out
+out
+Let j denote υ(i, k). We first have Wi,k
+= Wi,χ(i,k)
+=
+out
+ci,src /Ni,χ(i,k) . Then, Wi,j = ci,src /Ni,χ(i,k) · ci,j /Ni,j .
+Suppose that ci,j > Ni,j . By definition, χ(i, k) represents
+the first node that has the largest weight along an upstream
+path to node k for sub-stream Si . This means that any node
+p ∈ Ei,k \ Ei,χ(i,k) has wi,p = 1. Therefore, Ni,χ(i,k) = ci,j
+because Ni,χ(i,k) number of items sampled at node χ(i, k)
+
+Interval u
+w=1
+
+c=6
+
+1
+
+Interval u+1
+
+2
+
+3
+
+4
+
+5
+
+6
+
+Reservoir sampling with reservoir size, n = 3
+
+A
+
+w=2
+
+c=3
+
+1
+
+4
+
+6
+
+c=3
+
+1
+
+4
+
+Network
+
+w=2
+
+6
+
+B
+Fig. 3. Asynchronized arrival of data stream.
+
+out
+arrive at node j within the same time interval. Hence, Wi,j
+=
+out
+out
+ci,src /Ni,j . Since Wi,j > Wi,k , χ(i, j) = j. Therefore,
+out
+out
+Wi,j
+= Wi,χ(i,j)
+= ci,src /Ni,χ(i,j) .
+If there is no χ(i, k) that meets the inequality ci,src >
+out
+out
+Ni,χ(i,k) , Wi,k
+= 1. Then, Wi,j
+= ci,j /Ni,j if ci,j > Ni,j .
+out
+Otherwise, Wi,j
+= 1. This is equivalent to the base case.
+
+out
+Now when Wi,j
+> 1, Equation (4) is reduced to:
+
+SU Mi,j = (
+
+Yi,j
+X
+
+k=1
+
+out
+For node j ∈ Ei,j , suppose node π(i, j) sends Wi,π(i,j)
+to
+node j, followed by a series of items of sub-stream Si selected
+from node π(i, j). Now let us consider the case in question,
+where the number of items arriving at node j is less than that
+out
+of sampled items at node π(i, j). That is, ci,j = αCi,π(i,j)
+out
+where 0 < α < 1 and Ci,π(i,j) is the number of sampled items
+for Si at node π(i, j), which is min(ci,π(i,j) , Ni,π(i,j) ). When
+ci,j < Ni,j , node j selects all the items of sub-stream Si . As
+out
+such, there is no need for updating Wi,j
+and an asynchronous
+time interval is not an issue at all. Thus, we only consider a
+case where ci,j > Ni,j and thus χ(i, j) = j. In this case,
+Equation (4) becomes the following:
+
+SU Mi,j = (
+
+Yi,j
+X
+
+k=1
+Yi,j
+
+=(
+
+X
+
+k=1
+Yi,j
+
+=(
+
+X
+
+k=1
+
+ci,src
+Ii,j,k ) ·
+Ni,χ(i,j)
+
+(7)
+
+Note that Yi,j = Ni,χ(i,j) because node χ(i, j) is node j or
+the weight is 1 for all nodes between node χ(i, j) and node j
+along the upstream path.
+Now Equation (4) meets the following property: SU Mi,p '
+SU Mi,q , where p, q ∈ Ei,j (p 6= q). From Equation (7),
+PYi,p
+we know that SU Mi,p = ( k=1
+Ii,p,k ) · ci,src /Ni,χ(i,p) and
+PYi,q
+SU Mi,q = ( k=1 Ii,q,k ) · ci,src /Ni,χ(i,q) .
+PYi,p
+This quantity k=1
+Ii,p,k /Ni,χ(i,p) is an average of sampled items for sub-stream Si since Yi,p = Ni,χ(i,p) . Since this
+query is a linear type, the two sample averages from nodes p
+and q should be similar. Hence, SU Mi,p ' SU Mi,q .
+Therefore, even when multiple nodes do sampling independently, the root node can produce an undistorted query result
+on the input stream while the degree of error is bounded by
+the actual sampling rate, which we discuss in §III-D.
+C. Handling Asynchronous Time Interval
+One assumption made for Algorithm 2 is that time intervals
+across nodes are synchronized and thus all sampled substreams and a set of weights associated with them from a
+downstream node arrive at an upstream node within a time
+interval. In other words, the sub-streams and set of weights
+that belonged to an interval at the downstream node do not
+straddle a time interval at the upstream node. This assumption
+is unlikely to hold true in practice due to various reasons
+such as varying bandwidth between nodes, different resource
+availability across nodes, and so forth. We now relax the
+assumption and let each node independently maintain intervals. To handle this issue of asynchronous time interval across
+nodes, we extend Algorithm 2 by taking into account the actual
+counts of sampled items for sub-streams.
+
+out
+Ii,j,k ) · Wi,π(i,j)
+·
+out
+·
+Ii,j,k ) · Wi,π(i,j)
+
+Ii,j,k ) ·
+
+ci,j
+Ni,j
+out
+αCi,π(i,j)
+
+Ni,j
+
+(8)
+
+αci,src
+Ni,χ(i,j)
+
+Given Equation (8), SU Mi,j is under-estimated by a factor
+out
+out
+of α (= ci,j /Ci,π(i,j)
+). To correct this bias, we calibrate Wi,j
+out
+in
+by 1/α. Hence, the calibrated weight Wi,j is Wi,j × wi,j ×
+out
+Ci,π(i,j)
+/ci,j . This also suggests that the number of sampled
+items for sub-stream i at the downstream node π(i, j) should
+in
+out
+in
+be known to node j. We use Ci,j
+to denote Ci,π(i,j)
+; and Ci,j
+is another input parameter fed to the algorithm along with
+in
+Wi,j
+. The final equation is expressed as
+out
+in
+in
+Wi,j
+= Wi,j
+× wi,j × Ci,j
+/ci,j .
+
+(9)
+
+Therefore, Algorithm 2 is modified as follows. To correct the
+bias, we use the values in C in ; the expression on line 14 in
+Algorithm 2 should be replaced with Equation 9.
+Now there is one remaining issue; in this asynchronous time
+interval case, some items do not have their associated W in and
+C in in their arriving interval (e.g., see item 6 in Figure 3). To
+handle the issue, each node maintains the most recent sets
+W in and C in . Each value in these sets is only updated when
+a new value for a corresponding sub-stream arrives at a node.
+When the sampled items from those items are forwarded to an
+upstream node, new W out and C out sets are also generated
+and prepended to the items. For sub-stream i, Wiin and Ciin
+arrive from a downstream node, those values are updated in
+the locally-maintained sets W in and C in in Algorithm 1.
+Example. Consider a case in Figure 4. Because intervals
+between nodes 1 and 2 are not aligned (see Figure 4(b)),
+a calibrated weight at node 2 should be readjusted. At
+out
+node 1 in the example, Wi,1
+= ci,src /Ni,1 . At node 2,
+out
+out
+α = ci,2 /Ni,1 . Hence, Wi,2 = Wi,1
+× ci,2 /Ni,2 /α =
+ci,src /Ni,1 × ci,2 /Ni,2 × Ni,1 /ci,2 = ci,src /Ni,2 . Since
+PYi,1
+SU Mi,1 = ( k=1
+Ii,1,k ) × ci,src /Ni,1 and SU Mi,2 =
+PYi,2
+( k=1 Ii,2,k ) × ci,src /Ni,2 , SU Mi,1 ' SU Mi,2 .
+in
+in
+For (1 − α)Ni,1 items, node 2 uses the saved Wi,2
+and Ci,2
+in
+out
+in
+where Wi,2 = Wi,1 and Ci,2 = Ni,1 . Thus, the calibrated
+
+X sub-streams. The approximate mean value can be computed
+as:
+PX
+ci,src · M EANi,j
+SU M∗,j
+= i=1 PX
+M EAN∗,j = PX
+i=1 ci,src
+i=1 ci,src
+(13)
+X
+X
+=
+(ϕi · M EANi,j )
+
+sub-stream i
+1
+[I1, I2, ]
+
+2
+{[I'1, I'2, ], Wi,1, Ni,1}
+
+3
+{[I''1, I''2, ], Wi,2, Ni,2}
+
+(a) Example topology
+
+Interval at node 2
+(1-.) Ni,1
+
+ci,2 = . Ni,1
+
+i=1
+c
+
+Here, ϕi = PX i,src
+. Then, as each sub-stream is sampled
+i=1 ci,src
+independently, according to the random sampling theory [12],
+the variance of the approximate mean value can be estimated
+as:
+
+Ni,1
+Interval at node 1
+(b) Misaligned interval viewed at Node 2
+Fig. 4. A simple example.
+
+out
+in
+weight Wi,2
+= ci,src /Ni,1 × (1 − α)Ni,1 /Ni,2 × Ci,2
+/((1 −
+α)Ni,1 ) = ci,src /Ni,2 .
+
+Vd
+ar(M EAN∗,j ) =
+=
+
+D. Error Estimation
+We described how we apply the proposed algorithm to
+randomly sample the input data stream to generate the approximate results for linear queries. We now describe a method to
+estimate the accuracy of our approximate results via rigorous
+error bounds.
+As Algorithm 1 shows that the queries and error estimation
+will only perform on root, say node j. We assume that
+there are X geo-distributed sub-streams {Si }X
+i=1 as the input
+stream of A PPROX I OT. We compute the approximate sum
+of all items received from all sub-streams through a logical
+aggregation tree, randomly sampling only Yi,j items from each
+sub-stream Si,j . As each sub-stream is sampled independently,
+the variance of the approximate sum is:
+V ar(SU M∗,j ) =
+
+X
+X
+
+V ar(SU Mi,j )
+
+(10)
+
+i=1
+
+Further, as items are randomly selected for a sample within
+each sub-stream, according to the random sampling theory
+(Central limit theorem) [12], the variance of the approximate
+sum can be estimated as:
+Vd
+ar(SU M∗,j ) =
+
+X 
+X
+s2i,j 
+ci,src · (ci,src − Yi,j ) ·
+Yi,j
+i=1
+
+(11)
+
+out
+We can easily compute ci,src by Yi,j · Wi,j
+because either
+Yi,j = Ni,χ(i,j) or Yi,j = ci,src . Here, si,j denotes the standard
+deviation of the sub-stream Si ’s sampled items at node j:
+
+s2i,j
+
+Yi,j
+X
+1
+¯ )2
+=
+·
+(Ii,j,k − Ii,j
+Yi,j − 1
+
+=
+
+X
+X
+
+i=1
+X
+X
+i=1
+X
+X
+i=1
+
+V ar(ϕi · M EANi,j )
+ϕ2i · V ar(M EANi,j )
+ϕ2i ·
+
+(14)
+
+s2i,j ci,src − Yi,j
+·
+Yi,j
+ci,src
+
+Above, we have shown how to estimate the variances of the
+approximate sum and the approximate mean of the input data
+stream. Similarly, based on the central limit theorem, we can
+easily estimate the variance of the approximate results of any
+linear queries.
+Error bound. We compute the error bound for the approximate result based on the ‘68-95-99.7” rule [13]. According
+to this rule, the approximate result is within one, two, and
+three standard deviations away from the exact result with
+probabilities of 68%, 95%, and 99.7%, respectively. The
+standard deviation is computed by by taking the square root
+of the variance in Equation 11 and Equation 14.
+E. Distributed Execution
+Our proposed algorithm naturally extends for distributed
+execution as it does not require synchronization. Our straightforward design extension for parallelization is as follows: we
+handle each sub-stream by a set of w worker nodes. Each
+worker node samples an equal portion of items from this substream and generates a local reservoir of size no larger than
+Ni /w, where Ni is the total reservoir size allocated for substream Si . In addition, each worker node maintains a local
+counter to measure the number of its received items within a
+concerned time interval for weight calculation. The rest of the
+design remains the same.
+IV. I MPLEMENTATION
+
+(12)
+
+k=1
+
+¯ = 1 · PYi,j Ii,j,k .
+where Ii,j
+k=1
+Yi,j
+Next, we show how we can also estimate the variance of
+the approximate mean value of all items received from all the
+
+We implemented A PPROX I OT using Apache Kafka [14] and
+its library Kafka Streams [15]. Figure 5 illustrates the highlevel architecture of our prototype, where the shaded boxes
+represent the implemented modules. In this section, we first
+give a necessary background about Apache Kafka, and we next
+present the implementation details.
+
+next layer in the edge computing network topology using the
+Kafka topic of the next layer.
+
+Kafka cluster
+Kafka topics
+Layers
+n]
+Input data streams
+
+...
+
+Analyst
+
+Edge computing nodes
+(sampling nodes)
+Sampling
+module
+
+Data stream
+Sampled
+data stream
+
+Pub/Sub
+module
+Sampled
+data stream
+
+Sample size
+Sampling
+parameters
+
+Sample size
+
+Refined sample size
+
+Sampling
+module
+
+Query
+and
+budget
+
+Sampled
+data stream
+
+Approximate
+output
++
+error bound
+
+Computation
+Engine
+(Kafka Streams)
+
+Error estimation
+module
+
+Datacenter cluster (root node)
+
+Fig. 5. A PPROX I OT architecture.
+
+A. Background
+Apache Kafka [14] is a widely used scalable fault-tolerant
+distributed pub/sub messaging platform. Kafka offers the reliable distributed queues called topics to receive input data
+streams. Stream analytics systems can subscribe these topics
+to retrieve and process data streams. We used Kafka to model
+the layers in the edge computing topology, where the input
+streams are pipelined across layers via pre-defined topics.
+Recently, Kafka Streams [15] has been developed as a
+library on top of Kafka to offer a high-level dataflow API
+for stream processing. The key idea behind Kafka Streams
+is that it considers an input stream as an append-only data
+table (a log). Each arriving data item is considered as a row
+appended to the table. This design enables Kafka Streams
+to be a real-time stream processing engine, as opposed to
+the batched based stream processing systems (e.g., Spark
+Streaming [2]) that treat the input data stream as a sequence of
+micro-batches. Furthermore, since Kafka Streams is built on
+top of Kafka, it requires no additional cluster setup for a stream
+processing system (e.g., Apache Flink [16], Storm [17]). For
+these advantages, Kafka Streams is an excellent choice for our
+prototype implementation.
+The Kafka Streams library supports two sets of APIs [15]:
+(i) High-Level Streams DSL (Domain Specific Language) API
+to build a processing topology (i.e., DAG dataflow) and (ii)
+Low-Level Processor API to create user-defined processors (a
+processor is an operator in the processing topology).
+B. A PPROX I OT Implementation Details
+At a high level (see Figure 5), the input data streams are
+ingested to a Kafka cluster.
+Edge computing nodes (sampling nodes). A sampling node
+consumes an input stream from the Kafka cluster via the
+Pub/Sub module by subscribing to a pre-defined topic. Thereafter, the sampling module samples the input stream in an
+online manner using the proposed sampling algorithm (§III).
+Next, a producer is used to push the sampled data items to the
+
+Datacenter cluster (root node). The root node receives the
+sampled data streams from the final layer of sampling nodes.
+First, it also makes use of the sampling module to take a
+sample of the input. Thereafter, the computation engine of
+Kafka Streams (High-Level Streams DSL processors) executes
+the input query over the sampled data stream to produce an
+approximate output. Finally, the error estimation module performs the error estimation mechanism (see §III-D) to provide
+a rigorous error bound for the approximate query result. In
+addition, in the case the error bound of the approximate result
+exceeds the desired budget of the user, an adaptive feedback
+mechanism is activated to refine the sampling parameters at
+all layers to improve the accuracy in subsequent runs. We next
+describe in detail the implemented modules.
+I: Pub/Sub module. The Pub/Sub module ensures the communication between the edge computing layers. For that, we
+made use of the High-Level Streams DSL API to create the
+producer and consumer processors to send and retrieve data
+streams through a pre-defined topic corresponding to the layer.
+II: Sampling module. The sampling module implements the
+algorithm described in §III. In particular, we implemented the
+algorithm in a user-defined processor (i.e., sampling processor)
+using the Low-Level API supported by Kafka. The sampling
+processor works as a normal processor in the Kafka computing
+topology to select input data items from the topics.
+In addition, for the baseline comparison, we also implemented a simple random sampling (SRS) algorithm into a userdefined processor using the coin flip sampling algorithm [18].
+III: Error estimation module. The error estimation module
+computes the error bounds for the approximate output, which
+is necessary for the user to interpret the accuracy of result. We
+used the Apache Common Math library [19] to implement the
+error estimation mechanism as described in §III-D.
+V. E VALUATION : M ICROBENCHMARKS
+In this section, we present the evaluation results of A PPROX I OT using microbenchmarks. In the next section, we describe
+the evaluation results based on real-world datasets.
+A. Experimental Setup
+Cluster setup. We deployed the A PPROX I OT system using a
+cluster of 25 nodes. We used 15 nodes for the IoT deployment,
+each equipped with two dual-core Intel Xeon E3-1220 v3
+processors and 4GB of RAM, running Ubuntu 14.04. In the
+deployment, we emulated a four-layer tree topology of an IoT
+infrastructure which contains 8 source nodes producing the
+input data stream, 4 nodes for the first edge computing layer, 2
+nodes for the second edge computing layer, and one datacenter
+node (the root node). For the communication between the
+edge computing layers, we used a Kafka cluster using the
+10 remaining nodes, each of which has 3-core Intel Xeon E52603 v3 processors and 8GB of RAM, running Ubuntu 14.04.
+
+
+
+0.5
+
+
+(
+
+ApproxIoT
+SRS
+
+
+
+
+
+ApproxIoT
+SRS
+
+
+
+0.5
+
+
+(
+
+0.4
+
+
+
+
+0.6
+
+
+100
+
+0.4
+
+
+
+
+ApproxIoT
+SRS
+Native
+
+(%)
+
+150
+
+
+0.6
+
+
+
+
+
+
+ 40
+
+l
+
+
+
+0.3
+
+
+0.3
+
+
+
+
+
+
+0.2
+
+
+
+
+
+
+s
+
+50
+
+0.2
+
+
+
+
+
+
+
+
+
+
+0.1
+
+0.1
+
+A
+
+
+
+B
+
+
+
+A
+
+
+
+0
+
+0
+1020 40 60 8090
+Sampling fraction (%)
+
+(a) Gaussian distribution
+
+T
+
+1020 40 60 8090
+Sampling fraction (%)
+
+(b) Poisson distribution
+
+Fig. 6. Accuracy loss vs sampling fraction. The accuracy loss of ApproxIoT
+is at most 0.035% in (a) and 0.013% in (b), both of which are smaller than
+the counterpart of SRS.
+
+To emulate a WAN environment, we used the tc (traffic
+control) tool [20]. Based on the real measurements [21], the
+round-trip delay times between two adjacent layers are set to
+20 ms (between the source node and the first edge computing
+layer), 40 ms (between the first layer and the second layer) and
+80 ms (between the second layer and the datacenter node). In
+the network, each link’s capacity is 1 Gbps. This WAN setting
+remains the same across all the experiments we conducted
+unless otherwise stated.
+Synthetic data stream. We evaluated the performance of
+A PPROX I OT using synthetic input data streams with two
+data distributions: Gaussian and Poisson. For the Gaussian
+distribution, we generated four types of input sub-streams:
+A (µ = 10, σ = 5), B (µ = 1000, σ = 50), C (µ =
+10000, σ = 500) and D (µ = 100000, σ = 5000). For the
+Poisson distribution, we used four types of input sub-streams:
+A (λ = 10), B (λ = 100), C (λ = 1000) and D (λ = 10000).
+Metrics. We evaluated the performance of A PPROX I OT with
+the following three metrics: (i) Throughput defined as the
+number of data items processed per second; (ii) Accuracy
+loss defined as |approx − exact|/exact, where approx and
+exact denote the results produced by A PPROX I OT and a
+native execution without sampling, respectively; and lastly,
+(iii) Latency defined as the end-to-end latency taken by a data
+item from the source until it is processed in the datacenter.
+Methodology. We used the source nodes to produce and tune
+the rate of the input data streams such that the datacenter
+node in A PPROX I OT was saturated. This input rate was used
+for three approaches: (i) A PPROX I OT, (ii) SRS-based system
+employing Simple Random Sampling (in short, SRS), and (iii)
+Native execution. In the native execution approach, the input
+data streams are transferred from the source nodes all the way
+to the datacenter without any sampling at the edge nodes.
+B. Effect of Varying Sampling Fractions
+Accuracy. We first evaluate the accuracy loss of A PPROX I OT
+and the SRS-based system. We use both Gaussian and Poisson
+distributions while we vary the sampling fractions.
+Figure 6 shows that A PPROX I OT achieves much higher
+accuracy than the SRS-based system for both datasets. In
+particular, when the sampling fraction is 10%, the accuracy
+
+ApproxIoT
+SRS
+
+80
+
+r 60
+
+
+
+
+l
+
+100
+
+0
+1020 40 60 80 100
+Sampling fraction (%)
+
+20
+0
+1020
+
+S
+
+40
+
+60
+
+80 100
+
+ f  (%)
+
+Fig. 7. Throughput vs sampling frac- Fig. 8. Bandwidth saving vs sampling
+tion.
+fraction.
+
+of A PPROX I OT is 10× and 30× higher than SRS’s accuracy
+for Gaussian and Poisson datasets, respectively. This higher
+accuracy of A PPROX I OT is because A PPROX I OT ensures data
+items from each sub-stream are selected fairly by leveraging
+stratified sampling. Here, the absolute accuracy loss in SRS
+may look insignificant, but the estimation of SRS can be
+completely useless in the presence of a skewed distribution
+of arrival rates of the input streams, which we show in §V-E.
+Throughput. We next evaluate the throughput of A PPROX I OT
+in comparison with the SRS-based system.
+Figure 7 depicts the throughput comparison between A P PROX I OT and SRS. A PPROX I OT achieves a similar throughput
+as SRS due to the fact that the proposed sampling mechanism,
+just like SRS, requires no synchronization between workers
+(CPU cores) to take samples from the input data stream. For
+instance, with the sampling fraction of 89%, the throughput
+of A PPROX I OT is 12429 items/s, and that of SRS is 12547
+items/s with the sampling fraction of 90%. Note that, as we
+perform sampling across different layers, we cannot ensure
+that two algorithms have the same sampling fraction.
+Figure 7 also shows that both A PPROX I OT and SRS have
+a similar throughput compared to the native execution even
+when the sampling fraction is 100%. A PPROX I OT, SRS and
+the native execution achieve 11003 items/s, 11046 items/s
+and 11134 items/s, respectively. This demonstrates the low
+overhead of our sampling mechanism.
+Network bandwidth. In addition, sampling ensures that A P PROX I OT (and SRS, too) significantly saves the network
+bandwidth between the computing layers as shown in Figure 8;
+the network resource is fully utilized in this case, so the
+sampling fraction of 10% means that our system only requires
+10% of the total capacity (e.g., 100 Mbps out of 1 Gbps). Thus,
+even when the network resource is limited, A PPROX I OT can
+function effectively.
+Latency. We set the window size of A PPROX I OT to one
+second. Figure 9 shows that A PPROX I OT incurs a similar
+latency compared to the SRS-based system. In addition, when
+the sampling fraction of A PPROX I OT is 10%, A PPROX I OT
+achieves a 6× speedup with respect to the native execution.
+C. Effect of Varying Window Sizes
+The previous window size of one second may look arbitrary.
+Thus, we evaluate the impact of varying window sizes on the
+
+80
+
+12
+
+
+
+ 60
+
+
+
+
+11
+
+(
+
+
+
+
+
+ 40
+(
+
+
+
+
+
+
+
+
+
+
+
+10
+
+SRS
+
+L 20
+
+N 
+
+
+
+
+
+ApproxIoT
+SRS
+
+L
+
+ApproxIoT
+0
+
+9
+1020
+
+S
+
+40
+
+60
+
+80 100
+
+ f  (%)
+
+0.5 1
+2
+3
+Window size (sec)
+
+4
+
+Fig. 9. Latency vs sampling fraction. Fig. 10. Latency vs window size.
+A PPROX I OT uses 1 second window. Sampling fraction is set to 10%.
+
+latency of A PPROX I OT. We set a fixed sampling fraction of
+10% and measure the latency of the evaluated systems while
+we vary window sizes. Figure 10 shows the latency comparison between A PPROX I OT and the SRS-based system. The
+latency of A PPROX I OT increases as the window size increases
+whereas the latency of the SRS-based system remains the
+same. This is because the SRS-based system does not require
+a window for sampling the input streams in any of the edge
+computing layers. Therefore, like in any other window-based
+streaming systems [2], [16], the operators have to set small
+window sizes to meet the low latency requirement.
+D. Effect of Fluctuating Input Rates of Sub-streams
+We next evaluate the impact of fluctuating rates of substreams on the accuracy of A PPROX I OT. We keep the sampling fraction of 60% and measure the accuracy loss of A P PROX I OT and the SRS-based system. Figures 11(a) and 11(b)
+present the accuracy loss of A PPROX I OT and SRS with
+Gaussian distribution and Poisson distribution datasets. For
+these experiments, we create three different settings, in each
+of which four sub-streams A, B, C and D have different arrival
+rates. A setting is expressed as (A : B : C : D). For example,
+(50k : 25k : 12.5k : 625) means that the input rates of substreams A, B, C and D are 50k items/s, 25k items/s, 12.5k
+items/s, and 625 items/s, respectively.
+Both figures show that the accuracy of these approaches
+improves proportionally to the input rate of the sub-stream
+D since data items of this sub-stream have significant values
+compared to other sub-streams. Across all settings, A PPROX I OT achieves higher accuracy than the SRS-based system. For
+instance, under Setting1 in Figure 11(a), the accuracy loss of
+SRS-based system is 5.5× higher than that of A PPROX I OT;
+while under the same setting in Figure 11(b), the accuracy of
+A PPROX I OT is 74× higher than that of the SRS-based system.
+The higher accuracy of A PPROX I OT against SRS is due to
+the similar reason that we already explained: the SRS-based
+system may overlook the sub-stream D in which there are
+only a few data items but their values are significant, whereas
+A PPROX I OT is based on stratified sampling, and therefore, it
+captures all of the sub-streams well.
+E. Effect of Skew in Input Data Stream
+In this experiment, we analyze the effect of skew in the
+input data stream. We create a sub-stream that dominates the
+
+other sub-streams in terms of the number of data items. In
+particular, we generate an input data stream that consists of
+four sub-streams following a Poisson distribution, namely A
+(λ = 10), B (λ = 100), C (λ = 1000), and D (λ = 10000000).
+In this input data stream, the sub-stream A accounts for 80%
+of all data items, whereas the sub-streams B, C and D represent
+only 19.89%, 0.1%, and 0.01%, respectively.
+Figure 11(c) shows that A PPROX I OT achieves a significantly higher accuracy than the SRS-based system. With the
+sampling fraction of 10%, the accuracy of A PPROX I OT is
+2600× higher than the accuracy of SRS-based system. The
+reason for this is that A PPROX I OT considers each sub-stream
+fairly — none of them is ignored when samples are taken.
+Meanwhile, the SRS-based system may not yield sufficient
+numbers of data items for each sub-stream. Interestingly,
+as highlighted in Figure 11(c), the SRS-based system may
+overestimate the sum of the input data stream since it by
+chance mainly considers sub-stream D and ignores others (see
+evaluation results with the sampling fraction of 10%).
+VI. E VALUATION : R EAL - WORLD DATASETS
+In this section, we evaluate A PPROX I OT using two realworld datasets: (i) New York taxi ride and (ii) Brasov pollution
+dataset. We used the same cluster setup as described in §V-A.
+A. New York Taxi Ride Dataset
+
+Dataset. The NYC taxi ride dataset has been published at the
+DEBS 2015 Grand Challenge [22]. This dataset consists of the
+ride information of 10, 000 taxies in New York City in 2013.
+We used the dataset from January 2013.
+Query. We performed the following query: What is the total
+payment for taxi fares in NYC at each time window?
+Results. Figure 12(a) shows that the accuracy of A PPROX I OT
+improves with the increase of sampling fraction. With the
+sampling fraction of 10%, the accuracy loss of A PPROX I OT is
+0.1%, whereas with the sampling fraction of 47%, the accuracy
+loss is only 0.04%. In addition, we measure the throughput
+of A PPROX I OT with varying sampling fractions. Figure 12(b)
+depicts that the throughput of A PPROX I OT reduces when the
+sampling fraction increases. With the sampling fraction of
+10%, the throughput of A PPROX I OT is 122,199 items/sec,
+which is roughly 10% higher than the native execution.
+B. Brasov Pollution Dataset
+Dataset. The Brasov pollution dataset [23] consists of the
+pollution measurements (e.g., air quality index) in Brasov,
+Romania from August 2014 to October 2014. Each sensor
+provides a measurement result every 5 minutes.
+Query. We performed the following query: What is the total
+pollution values of particulate matter, carbon monoxide, sulfur
+dioxide and nitrogen dioxide in every time window?
+Results. Figure 12(a) depicts the accuracy loss of A PPROX I OT
+in processing the pollution dataset with varying sampling
+fractions. With the sampling fractions of 10% and 40%,
+the accuracy loss of A PPROX I OT are 0.07% and 0.02%,
+
+0.7
+ApproxIoT
+SRS
+
+0.4
+
+
+(
+
+
+
+0.5
+(
+
+
+
+
+
+0.3
+
+
+
+
+0.4
+
+
+l
+
+
+
+0.2
+
+
+
+
+
+
+0.1
+A
+
+A
+
+0
+
+ 40
+
+
+0.1
+
+A 20
+
+0
+Setting1
+Setting2
+Setting3
+Input rates of data streams
+
+SRS
+
+ 80
+
+0.2
+
+
+
+
+
+
+
+ 60
+
+0.3
+
+
+
+
+
+100
+
+l
+
+
+
+l
+
+
+
+120
+ApproxIoT
+SRS
+
+0.6
+
+
+(%)
+
+0.5
+
+
+0
+Setting1
+Setting2
+Setting3
+Input rates of data streams
+
+(a) Gaussian distribution
+
+(b) Poisson distribution
+
+10 20
+
+S
+
+40
+
+60
+80 90
+fraction (%)
+
+(c) Extremely skewed input data stream
+
+Fig. 11. The accuracy comparison between A PPROX I OT and the SRS-based system with different arrival rates of sub-streams. For (a) and (b), the arrival
+rates (items/sec) of the four input sub-streams A, B, C, and D are the following: Setting1: (50k : 25k : 12.5k : 625), Setting2: (25k : 25k : 25k : 25k)
+and Setting3: (625 : 12.5k : 25k : 50k). For (c), Poisson distribution is used; A, B, C and D have λ = 10, 100, 1000 and 10000000, respectively; the
+sub-stream A accounts for 80% of all data items while the sub-streams B, C and D account for only 19.89%, 0.1%, and 0.01%, respectively. The average
+accuracy loss of A PPROX I OT is at most 0.056% in (a), 0.014% in (b) and 0.035% in (c).
+
+150
+
+
+(%)
+
+
+
+0.16
+
+ 0.12
+
+B Pollution
+NYC T
+
+Brasov Pollution
+NYC Taxi
+
+
+
+
+100
+
+l
+
+ 0.08
+
+
+
+
+
+
+
+
+
+50
+
+
+A
+
+Native throughput
+for two datasets
+
+
+
+0.04
+
+
+
+
+
+
+
+
+0
+T
+
+1020
+
+S
+
+40
+
+60
+
+f 
+
+8090
+(%)
+
+0
+1020 40 60 80 100
+Sampling fraction (%)
+
+(a) Accuracy loss vs sampling frac- (b) Throughput vs sampling fraction
+tion
+Fig. 12. The accuracy loss and throughput of A PPROX I OT in processing the
+two real-world datasets. The flat line in (b) shows the throughput of the native
+approach for processing the two datasets; only one line is presented because
+there is a marginal difference between processing the two datasets.
+
+respectively. The accuracy loss in processing this dataset has
+a similar but lower curve as for the NYC taxi ride dataset.
+The reason is that the values of data items in Brasov pollution
+dataset are more stable than in NYC tax ride dataset.
+Figure 12(b) presents the throughput of A PPROX I OT with
+different sampling fractions. With the sampling fraction of
+10%, A PPROX I OT achieves a 9× higher throughput than the
+native execution. The throughputs of processing both the NYC
+taxi ride dataset and the pollution dataset are similar.
+VII. R ELATED W ORK
+With the ability to enable a systematic trade-off between
+accuracy and efficiency, approximate computing has been
+explored in the context of distibuted data analytics [24],
+[25], [26], [27], [28], [9], [?]. In this context, sampling-based
+techniques are properly the most widely used for approximate
+data analytics [24], [25], [26]. These systems show that it is
+possible to leverage the benefits of approximate computing
+in the distributed big data analytics settings. Unfortunately,
+these systems are mainly targeted towards batch processing,
+where the input data remains unchanged during the course
+of sampling. Therefore, these systems cannot cater to stream
+analytics, which requires real-time processing of data streams.
+
+To overcome this limitation, IncApprox [27], StreamApprox [9], [29], and ApproxJoin [30] have been proposed for
+approximate stream analytics. IncApprox introduces an online
+“biased sampling” algorithm that uses self-adjusting computation [31] to produce incrementally updated approximate results [32], [33], [34], [35]. Meanwhile, StreamApprox handles
+the fluctuation of input streams by using an online adaptive
+stratified sampling algorithm. These systems demonstrate that
+it’s also possible to trade the output quality for efficiency
+in stream processing. ApproxJoin proposed an approximate
+join mechanism for distributed data analytics. Unfortunately,
+these systems target processing input data streams within a
+centralized datacenter, where the online sampling is carried
+out at a centralized stream aggregator. In A PPROX I OT, we
+designed a distributed online sampling algorithm for the IoT
+setting, where the sampling is carried out in a truly distributed
+fashion at multiple levels using the edge computing resources.
+Recently, in the context of IoT, edge computing has emerged
+as a promising solution to reduce latency in data analytics
+systems [36], [37]. In edge computing, a part of computation
+and storage are performed at the Internet’s edge closer to
+IoT devices or sensors. By moving either whole or partial
+computation to the edge, edge computing allows to achieve not
+only low latency but also significant reduction in bandwidth
+consumption [37]. Several works deploy sampling and filtering
+mechanisms at sources (sensor nodes) to further optimize
+communication costs [38], [39]. However, the proposed sampling mechanisms in these works are “snapshot sampling”
+techniques which are used to take input data stream every
+certain time interval. PrivApprox [28], [40] proposed a marriage of approximate computing based on sampling with the
+randomized response for improved performance and users’
+privacy. As opposed, in A PPROX I OT, we leverage samplingbased techniques at the edge to further reduce the latency and
+bandwidth consumption in processing large-scale IoT data.
+In detail, we design an online adaptive random sampling
+algorithm, and perform it not only at the root node, but also
+at all layers of the computing topology.
+Finally, it is worth to mention that there has been a
+surge of research in geo-distributed data analytics in multi-
+
+datacenters [41], [42], [43], [44], [45], [46]. However, these
+system focus on improving the performance for batch processing in the context of data centers, and are not designed for
+edge computing. In A PPROX I OT, we design an approximation
+technique for real-time stream analytics in a geo-distributed
+edge computing.
+VIII. C ONCLUSION
+The unprecedentedly huge volume of data in the IoT era
+presents both opportunities and challenges for building datadriven intelligent services. The current centralized computing
+model cannot cope with low-latency requirement in many
+online services, and it is also a wasteful computing medium
+in terms of networking, computing, and storage infrastructure for handling IoT-driven data streams across the globe.
+In this paper, we explored a radically different approach
+that exploits approximate computing paradigm for a globally
+distributed IoT environment. We designed and implemented
+A PPROX I OT, a stream analytics system for IoT that achieves
+efficient resource utilization, and also adapts to the varying
+requirements of analytics applications and constraints in the
+underlying computing/networking infrastructure. The nodes in
+the system run a weighted hierarchical sampling algorithm
+independently without any cross-node coordination, which
+facilitates parallelization, thereby making A PPROX I OT scalable. Our evaluation with synthetic and real-world datasets
+demonstrates that A PPROX I OT achieves 1.3×—9.9× higher
+throughput than the native stream analytics execution and
+3.3×—8.8× higher accuracy than a simple random sampling
+scheme under the varying sampling fractions of 80% to 10%.
+Limitations and future work. While A PPROX I OT approach
+is quite useful to achieve desired properties, our current system
+implementation has the following limitations.
+First, A PPROX I OT currently supports only approximate
+linear queries. We plan to extend the system to support more
+complex queries [47], [26] such as joins, top-k, etc., as part
+of the future work.
+Second, our current implementation relies on manual adjustment of user’s query budget to the required sampling
+parameters. As part of the future work, we plan to implement
+an automated cost function to tune the sampling parameters
+for the required system performance and resource utilization.
+Lastly, we have evaluated A PPROX I OT using a small
+testbed. As part of the future work, we plan to extend our
+system evaluation via deploying A PPROX I OT over Azure
+Stream Analytics [48] to further evaluate the performance of
+our system in a real IoT infrastructure.
+The source code of A PPROX I OT is publicly available: https:
+//ApproxIoT.github.io/ApproxIoT/
+R EFERENCES
+[1] Cisco, “Cisco Global Cloud Index: Forecast and Methodology,” in Cisco
+White Paper, 2016.
+[2] “Apache Spark Streaming,” http://spark.apache.org/streaming, accessed:
+April, 2018.
+[3] Garcia Lopez et al., “Edge-centric computing: Vision and challenges,”
+in Proceedings of SIGCOMM CCR, 2015.
+
+[4] A. Doucet, S. Godsill, and C. Andrieu, “On sequential monte carlo
+sampling methods for bayesian filtering,” Statistics and Computing,
+2000.
+[5] S. Natarajan, Imprecise and Approximate Computation. Kluwer Academic Publishers, 1995.
+[6] M. Al-Kateb and B. S. Lee, “Stratified reservoir sampling over heterogeneous data streams,” in Proceedings of the 22nd International Conference on Scientific and Statistical Database Management (SSDBM),
+2010.
+[7] J. S. Vitter, “Random sampling with a reservoir,” ACM Transactions on
+Mathematical Software (TOMS), 1985.
+[8] S. Lohr, Sampling: design and analysis, 2nd Edition. Cengage Learning,
+2009.
+[9] D. L. Quoc, R. Chen, P. Bhatotia, C. Fetzer, V. Hilt, and T. Strufe,
+“StreamApprox: Approximate Computing for Stream Analytics,” in
+Proceedings of the International Middleware Conference (Middleware),
+2017.
+[10] P. Bhatotia, U. A. Acar, F. P. Junqueira, and R. Rodrigues, “Slider:
+Incremental Sliding Window Analytics,” in Proceedings of the 15th
+International Middleware Conference (Middleware), 2014.
+[11] P. Bhatotia, M. Dischinger, R. Rodrigues, and U. A. Acar, “Slider: Incremental Sliding-Window Computations for Large-Scale Data Analysis,”
+MPI-SWS, Tech. Rep. MPI-SWS-2012-004, 2012, http://www.mpi-sws.
+org/tr/2012-004.pdf.
+[12] S. K. Thompson, Sampling. Wiley Series in Probability and Statistics,
+2012.
+[13] F. Pukelsheim, “The three sigma rule,” in The American Statistician,
+1994.
+[14] “Kafka - A high-throughput distributed messaging system,” http://kafka.
+apache.org, accessed: April, 2018.
+[15] “Kafka Streams API,” https://kafka.apache.org/documentation/streams/,
+accessed: April, 2018.
+[16] “Apache Flink,” https://flink.apache.org/, accessed: April, 2018.
+[17] “Apache Storm,” http://storm-project.net/, accessed: May, 2017.
+[18] C. Jermaine, S. Arumugam, A. Pol, and A. Dobra, “Scalable Approximate Query Processing with the DBO Engine,” ACM Transactions of
+Database Systems (TODS), 2008.
+[19] C. Math, “The Apache Commons Mathematics Library,” http://
+commons.apache.org/proper/commons-math, accessed: May, 2017.
+[20] B. Hubert et al., “Linux advanced routing & traffic control howto,”
+setembro de, 2002.
+[21] “IP Latency Statistics,” http://www.verizonenterprise.com/about/
+network/latency/, accessed: April, 2018.
+[22] Z. Jerzak and H. Ziekow, “The debs 2015 grand challenge,” in Proceedings of the 9th ACM International Conference on Distributed EventBased Systems (DEBS), 2015.
+[23] M. I. Ali, F. Gao, and A. Mileo, “Citybench: A configurable benchmark
+to evaluate rsp engines using smart city datasets,” in In proceedings of
+14th International Semantic Web Conference (ISWC), 2015.
+[24] S. Agarwal, B. Mozafari, A. Panda, H. Milner, S. Madden, and I. Stoica,
+“BlinkDB: Queries with Bounded Errors and Bounded Response Times
+on Very Large Data,” in Proceedings of the ACM European Conference
+on Computer Systems (EuroSys), 2013.
+[25] I. Goiri, R. Bianchini, S. Nagarakatte, and T. D. Nguyen, “ApproxHadoop: Bringing Approximations to MapReduce Frameworks,” in
+Proceedings of the Twentieth International Conference on Architectural
+Support for Programming Languages and Operating Systems (ASPLOS),
+2015.
+[26] S. Kandula, A. Shanbhag, A. Vitorovic, M. Olma, R. Grandl, S. Chaudhuri, and B. Ding, “Quickr: Lazily Approximating Complex Ad-Hoc
+Queries in Big Data Clusters,” in Proceedings of the ACM SIGMOD
+International Conference on Management of Data (SIGMOD), 2016.
+[27] D. R. Krishnan, D. L. Quoc, P. Bhatotia, C. Fetzer, and R. Rodrigues,
+“IncApprox: A Data Analytics System for Incremental Approximate
+Computing,” in Proceedings of the 25th International Conference on
+World Wide Web (WWW), 2016.
+[28] D. L. Quoc, M. Beck, P. Bhatotia, R. Chen, C. Fetzer, and T. Strufe,
+“PrivApprox: Privacy-Preserving Stream Analytics,” in Proceedings of
+the 2017 USENIX Annual Technical Conference (USENIX ATC), 2017.
+[29] D. L. Quoc, R. Chen, P. Bhatotia, C. Fetzer, V. Hilt, and T. Strufe,
+“Approximate Stream Analytics in Apache Flink and Apache Spark
+Streaming,” CoRR, vol. abs/1709.02946, 2017.
+[30] D. L. Quoc, I. E. Akkus, P. Bhatotia, S. Blanas, R. Chen, C. Fetzer,
+and T. Strufe, “Approximate Distributed Joins in Apache Spark,” CoRR,
+2018.
+
+[31] P. Bhatotia, “Incremental parallel and distributed systems,” Ph.D. dissertation, Max Planck Institute for Software Systems (MPI-SWS), 2015.
+[32] P. Bhatotia, R. Rodrigues, and A. Verma, “Shredder: GPU-Accelerated
+Incremental Storage and Computation,” in Proceedings of USENIX
+Conference on File and Storage Technologies (FAST), 2012.
+[33] P. Bhatotia, A. Wieder, R. Rodrigues, U. A. Acar, and R. Pasquini,
+“Incoop: MapReduce for Incremental Computations,” in Proceedings of
+the ACM Symposium on Cloud Computing (SoCC), 2011.
+[34] P. Bhatotia, A. Wieder, I. E. Akkus, R. Rodrigues, and U. A. Acar,
+“Large-scale incremental data processing with change propagation,” in
+Proceedings of the Conference on Hot Topics in Cloud Computing
+(HotCloud), 2011.
+[35] P. Bhatotia, P. Fonseca, U. A. Acar, B. Brandenburg, and R. Rodrigues,
+“iThreads: A Threading Library for Parallel Incremental Computation,”
+in proceedings of the 20th International Conference on Architectural
+Support for Programming Languages and Operating Systems (ASPLOS),
+2015.
+[36] M. Satyanarayanan, “The emergence of edge computing,” Computer,
+2017.
+[37] H. Chang, A. Hari, S. Mukherjee, and T. V. Lakshman, “Bringing the
+cloud to the edge,” in Proceedings of the IEEE Conference on Computer
+Communications Workshops (INFOCOM WKSHPS), 2014.
+[38] J. Traub, S. Breß, T. Rabl, A. Katsifodimos, and V. Markl, “Optimized
+on-demand data streaming from sensor nodes,” in Proceedings of the
+2017 Symposium on Cloud Computing (SoCC), 2017.
+[39] D. Trihinas, G. Pallis, and M. D. Dikaiakos, “AdaM: An adaptive
+monitoring framework for sampling and filtering on IoT devices,” in
+2015 IEEE International Conference on Big Data (Big Data), 2015.
+[40] D. L. Quoc, M. Beck, P. Bhatotia, R. Chen, C. Fetzer, and T. Strufe,
+“Privacy preserving stream analytics: The marriage of randomized
+
+[41]
+
+[42]
+
+[43]
+
+[44]
+
+[45]
+[46]
+[47]
+
+[48]
+
+response and approximate computing,” https://arxiv.org/abs/1701.05403,
+2017. [Online]. Available: https://arxiv.org/abs/1701.05403
+R. Viswanathan, G. Ananthanarayanan, and A. Akella, “CLARINET:
+Wan-aware optimization for analytics queries,” in Proceedings of the
+12th USENIX Symposium on Operating Systems Design and Implementation (OSDI), 2016.
+K. Kloudas, M. Mamede, N. Preguiça, and R. Rodrigues, “Pixida: Optimizing Data Parallel Jobs in Wide-area Data Analytics,” in Proceedings
+of the International Conference on Very Large Data Bases (VLDB),
+2015.
+K. Hsieh, A. Harlap, N. Vijaykumar, D. Konomis, G. R. Ganger, P. B.
+Gibbons, and O. Mutlu, “Gaia: Geo-Distributed Machine Learning Approaching LAN Speeds,” in Proceedings of the 14th USENIX Symposium
+on Networked Systems Design and Implementation (NSDI), 2017.
+A. Wieder, P. Bhatotia, A. Post, and R. Rodrigues, “Orchestrating
+the Deployment of Computations in the Cloud with Conductor,” in
+proceedings of the 9th USENIX symposium on Networked Systems
+Design and Implementation (NSDI), 2012.
+——, “Conductor: Orchestrating the Clouds,” in proceedings of the
+4th international workshop on Large Scale Distributed Systems and
+Middleware (LADIS), 2010.
+——, “Brief Announcement: Modelling MapReduce for Optimal Execution in the Cloud,” in proceedings of the 29th ACM SIGACT-SIGOPS
+symposium on Principles of Distributed Computing (PODC), 2010.
+A. Dobra, M. Garofalakis, J. Gehrke, and R. Rastogi, “Processing complex aggregate queries over data streams,” in Proceedings of the ACM
+SIGMOD International Conference on Management of Data (SIGMOD),
+2002.
+“Azure
+Stream
+Analytics,”
+https://docs.microsoft.com/enus/azure/stream-analytics/stream-analytics-edge,
+accessed:
+April,
+2018.
+
+

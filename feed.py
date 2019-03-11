@@ -6,12 +6,13 @@ from datetime import datetime
 from datetime import timedelta
 from threading import Timer
 import os
+import warnings
 
 CHECKING_TIME_SECS = 43200
 x=datetime.today()
 d = timedelta(seconds=CHECKING_TIME_SECS)
 secs=d.seconds
-
+categories  = ['cs.DB', 'cs.AI','cs.LG']
 
 SAVE_PATH = str(os.environ['SAVE_PATH'])
 
@@ -25,13 +26,13 @@ def check_for_pdf_link(links):
             return (True, l['href'])
     return (False, '')
 
-url = 'http://export.arxiv.org/api/query?search_query=cat:cs.DB&sortBy=lastUpdatedDate&sortOrder=descending'
+custom_url = 'http://export.arxiv.org/api/query?search_query=cat:{0}&sortBy=lastUpdatedDate&sortOrder=descending'
 
 def timer_start():
     t = Timer(secs, check_for_papers)
     t.start()
 
-def check_for_papers():
+def check_for_papers(url):
     print "CHECKING FOR PAPERS"
     data = urllib.urlopen(url).read()
     f = feedparser.parse(data)
@@ -62,7 +63,11 @@ def check_for_papers():
                 urllib.urlretrieve(res[1],filename=SAVE_PATH+e['title']+'.pdf')
                 sendmessage('Recommended Paper added\n{0}'.format(e['title']))
         else:
-            print "Not recommending with score : {0}".format(avg_score)
+            print "Not recommending:\n{0}\nwith score : {1}".format(e['title'], avg_score)
 
-    timer_start()
-timer_start()
+if __name__=='__main__':
+    for cat in categories:
+        url = custom_url.format(cat)
+        print("Checking for category : {0}".format(cat))
+        print("URL {0}".format(url))
+        check_for_papers(url)
