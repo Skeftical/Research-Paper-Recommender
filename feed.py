@@ -1,5 +1,4 @@
 import urllib
-import gensim
 import feedparser
 import subprocess
 from datetime import datetime
@@ -7,6 +6,8 @@ from datetime import timedelta
 from threading import Timer
 import os
 import warnings
+from joblib import dump, load
+
 
 CHECKING_TIME_SECS = 43200
 x=datetime.today()
@@ -47,16 +48,16 @@ def check_for_papers(url):
         abstract = e['summary']
 
         #Load pre-trained doc2vec model
-        model = gensim.models.doc2vec.Doc2Vec.load('modelDoc2Vec.model')
-        str_vector = gensim.utils.simple_preprocess(abstract)
+        tfidf_model = load('tfidf.model')
+        inferred_vector = tfidf_model.transform([abstract])
         #Infer vector for new paper
-        inferred_vector = model.infer_vector(str_vector)
+        # print(inferred_vector)
         #Get similarities with stored papers
-        sims = model.docvecs.most_similar([inferred_vector], topn=len(model.docvecs))
+        svm = load('svm.model')
         #Strategy for recommending
-        avg_score = sum(map(lambda x : x[1], sims))/float(len(sims))
-        THRESH = 0.7
-        if avg_score>THRESH:
+        avg_score = float(svm.predict(inferred_vector))
+        print("average score",avg_score)
+        if avg_score==1:
             links = e['links']
             res =  check_for_pdf_link(links)
             if res[0]:
