@@ -18,7 +18,7 @@ itsdangerous==0.24
 Jinja2==2.9.6
 jmespath==0.9.3
 MarkupSafe==1.0
-numpy==1.15.0
+numpy==1.22.0
 pandas==0.23.4
 pdfminer==20140328
 python-dateutil==2.7.3
